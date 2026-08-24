@@ -13,6 +13,7 @@ import { promisify } from 'node:util';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import { parseEnvText } from '../manager.mjs';
 
 const execFileP = promisify(execFile);
 
@@ -61,21 +62,19 @@ async function detect() {
 async function service() {
   const det = await detect();
   if (!det.installed) return null;
-  const env = { ...process.env };
-  // Source ~/.dsh/env if the user has one (api key, port, host, etc.)
+  // Source ~/.dsh/env if the user has one (api key, port, host, etc.).
+  // Uses the same parser as manager.parseEnvText — supports `KEY=val` and
+  // `export KEY=val` and optional quoting.
+  let extra = {};
   try {
-    const text = await readFile(DSH_ENV_FILE, 'utf8');
-    for (const line of text.split('\n')) {
-      const m = line.match(/^\s*export\s+([A-Z_][A-Z0-9_]*)=(.*?)\s*$/);
-      if (m) env[m[1]] = m[2].replace(/^['"]|['"]$/g, '');
-    }
+    extra = parseEnvText(await readFile(DSH_ENV_FILE, 'utf8'));
   } catch {}
-  const host = env.DSH_HOST || '127.0.0.1';
-  const port = env.DSH_PORT || '3080';
+  const host = extra.DSH_HOST || '127.0.0.1';
+  const port = extra.DSH_PORT || '3080';
   return {
     command: 'dsh',
     args: ['web', '--host', host, '--port', port, '--no-open'],
-    env,
+    env: extra,
   };
 }
 

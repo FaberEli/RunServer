@@ -2,8 +2,18 @@
 // Default selection: macOS → launchd (system-native, KeepAlive, RunAtLoad);
 // other platforms → child_process. The architecture is open to a future
 // SystemdManager for Linux without changing callers.
+//
+// P0 fixes (vs v0.1.0):
+//   - Lazy init: importing this module no longer touches the filesystem.
+//     Paths are resolved on first use via ensurePaths().
+//   - stop(): polls isRunning until the process actually exits (or a deadline
+//     passes) instead of fire-and-forget SIGTERM. Without this, status
+//     immediately after stop could still report running=true.
+//   - restart(): polls until stopped, no fixed sleep.
+//   - launchd cleanup(): on start, boot out any stale `com.runserver.<id>`
+//     label that survived a previous (buggy) run.
 import { spawn, execFile } from 'node:child_process';
-import { mkdir, writeFile, unlink, readFile, access, stat } from 'node:fs/promises';
+import { mkdir, writeFile, unlink, readFile, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -18,15 +28,28 @@ const PIDS_DIR = path.join(RUNSERVER_HOME, 'pids');
 const LOGS_DIR = path.join(RUNSERVER_HOME, 'logs');
 const PLIST_DIR = path.join(os.homedir(), 'Library', 'LaunchAgents');
 
-await mkdir(PIDS_DIR, { recursive: true });
-await mkdir(LOGS_DIR, { recursive: true });
+let pathsReady = null;
+function ensurePaths() {
+  if (!pathsReady) {
+    pathsReady = (async () => {
+      await mkdir(PIDS_DIR, { recursive: true });
+      await mkdir(LOGS_DIR, { recursive: true });
+    })();
+  }
+  return pathsReady;
+}
+
+const STOP_TIMEOUT_MS = 8000;   // 8s grace period before SIGKILL
+const STOP_POLL_MS = 200;       // how often to re-check during graceful stop
+const RESTART_STOP_TIMEOUT_MS = 15000; // restart can be a bit more patient
 
 // ─── ServiceManager interface (duck-typed) ───────────────────────────
-// start(spec) / stop(id) / restart(id) / isRunning(id) / status(id)
+// start(spec) / stop(id) / restart(spec) / isRunning(id) / status(id) / cleanup(id)
 
 // ─── ChildProcessManager (cross-platform fallback) ──────────────────
 class ChildProcessManager {
   async start(spec) {
+    await ensurePaths();
     if (await this.isRunning(spec.id)) {
       log.warn(`${spec.id}: already running, skipping start`);
       return;
@@ -40,32 +63,36 @@ class ChildProcessManager {
       stdio: ['ignore', out.fd, out.fd],
     });
     child.unref();
+    if (typeof child.pid !== 'number') {
+      throw new Error(`${spec.id}: spawn returned no pid — ${spec.command} may not exist`);
+    }
     await writeFile(path.join(PIDS_DIR, `${spec.id}.pid`), String(child.pid));
     log.ok(`${spec.id}: started (pid ${child.pid}, logs: ${logFile})`);
   }
 
-  async stop(id) {
+  async stop(id, { timeoutMs = STOP_TIMEOUT_MS } = {}) {
+    await ensurePaths();
     const pid = await readPid(id);
     if (!pid) {
       log.warn(`${id}: no pid file, nothing to stop`);
       return;
     }
-    try {
-      process.kill(pid, 'SIGTERM');
-      log.ok(`${id}: sent SIGTERM to pid ${pid}`);
-    } catch (e) {
-      if (e.code === 'ESRCH') {
-        log.warn(`${id}: pid ${pid} not alive, removing stale pid file`);
-      } else {
-        throw e;
-      }
+    await sendSignalOrSkip(id, pid, 'SIGTERM');
+    const exited = await waitForExit(id, pid, timeoutMs);
+    if (!exited) {
+      log.warn(`${id}: did not exit within ${timeoutMs}ms, sending SIGKILL`);
+      try { process.kill(pid, 'SIGKILL'); } catch (e) { if (e.code !== 'ESRCH') throw e; }
+      await waitForExit(id, pid, 2000);
     }
     try { await unlink(path.join(PIDS_DIR, `${id}.pid`)); } catch {}
+    log.ok(`${id}: stopped`);
   }
 
-  async restart(spec) {
-    await this.stop(spec.id);
-    await sleep(500);
+  async restart(spec, opts = {}) {
+    await ensurePaths();
+    if (await this.isRunning(spec.id)) {
+      await this.stop(spec.id, { timeoutMs: RESTART_STOP_TIMEOUT_MS });
+    }
     await this.start(spec);
   }
 
@@ -80,6 +107,8 @@ class ChildProcessManager {
         try { await unlink(path.join(PIDS_DIR, `${id}.pid`)); } catch {}
         return false;
       }
+      // EPERM means the process exists but we can't signal it — count as running
+      if (e.code === 'EPERM') return true;
       throw e;
     }
   }
@@ -88,6 +117,11 @@ class ChildProcessManager {
     const running = await this.isRunning(id);
     const pid = running ? await readPid(id) : null;
     return { backend: 'child_process', running, pid };
+  }
+
+  async cleanup(id) {
+    await ensurePaths();
+    try { await unlink(path.join(PIDS_DIR, `${id}.pid`)); } catch {}
   }
 }
 
@@ -102,15 +136,14 @@ class LaunchdManager {
   plistFor(id) { return path.join(PLIST_DIR, `${this.labelFor(id)}.plist`); }
 
   async start(spec) {
+    await ensurePaths();
     await mkdir(PLIST_DIR, { recursive: true });
+    await this.cleanup(spec.id); // P0-4: remove any stale label/plist before we begin
+
     const logFile = path.join(LOGS_DIR, `${spec.id}.log`);
     const errFile = path.join(LOGS_DIR, `${spec.id}.error.log`);
 
-    // launchd's default PATH is /usr/bin:/bin:/usr/sbin:/sbin — anything
-    // installed in user-managed runtimes (vmr/asdf/nix) is invisible. We
-    // therefore resolve the command to an absolute path here, via `which`
-    // against the current process's PATH. This is the same trick brew uses
-    // for `HOMEBREW_PREFIX`/Cellar binaries in its plists.
+    // Resolve command to absolute path (launchd's default PATH is minimal).
     let command = spec.command;
     if (!path.isAbsolute(command)) {
       const abs = await resolveOnPath(command);
@@ -120,12 +153,8 @@ class LaunchdManager {
       command = abs;
     }
 
-    // IMPORTANT: do NOT inherit the current process env into the plist wholesale —
-    // it pollutes launchd with hundreds of shell-only / IDE variables. We DO
-    // need to forward the user's PATH though, because (a) the shebang
-    // `#!/usr/bin/env node` in many CLI tools needs to resolve `node`, and
-    // (b) launchd's default PATH is just /usr/bin:/bin:/usr/sbin:/sbin, which
-    // excludes user runtimes (vmr, asdf, nix, brew, etc.). Spec env overrides.
+    // Forward user PATH so that `#!env node` shebangs can find `node`.
+    // Don't pass process.env wholesale — it pollutes launchd with shell state.
     const plist = renderPlist({
       label: this.labelFor(spec.id),
       command,
@@ -137,10 +166,8 @@ class LaunchdManager {
     const plistPath = this.plistFor(spec.id);
     await writeFile(plistPath, plist);
     try {
-      // `launchctl bootstrap` is the modern API but on some macOS user
-      // sessions it fails with "Input/output error" while the legacy
-      // `launchctl load -w` works against the same plist. We use the legacy
-      // API — same outcome, broader compatibility.
+      // Legacy load -w is more reliable on macOS user sessions than bootstrap
+      // (the modern API sometimes returns EIO while the legacy one works).
       await this._launchctl(['load', '-w', plistPath]);
       log.ok(`${spec.id}: registered as launchd agent (${plistPath}, ${command})`);
     } catch (e) {
@@ -149,7 +176,7 @@ class LaunchdManager {
     }
   }
 
-  async stop(id) {
+  async stop(id, opts = {}) {
     const plistPath = this.plistFor(id);
     try {
       await this._launchctl(['unload', plistPath]);
@@ -169,13 +196,12 @@ class LaunchdManager {
     try {
       const { stdout } = await this._launchctl(['list']);
       for (const line of stdout.split('\n')) {
-        if (line.includes(this.labelFor(id))) {
-          // launchctl list format: "PID  Status  Label"
-          // PID column: '-' if not running, numeric if running
-          const firstCol = line.trim().split(/\s+/)[0];
-          const pid = parseInt(firstCol, 10);
-          if (Number.isFinite(pid) && pid > 0) return true;
-        }
+        if (!line.includes(this.labelFor(id))) continue;
+        // launchctl list format: "PID  Status  Label"
+        // PID column: '-' or empty if not running, numeric if running
+        const firstCol = line.trim().split(/\s+/)[0];
+        const pid = parseInt(firstCol, 10);
+        if (Number.isFinite(pid) && pid > 0) return true;
       }
     } catch (e) {
       log.warn(`${id}: launchctl list failed: ${e.message}`);
@@ -190,15 +216,27 @@ class LaunchdManager {
       try {
         const { stdout } = await this._launchctl(['list']);
         for (const line of stdout.split('\n')) {
-          if (line.includes(this.labelFor(id))) {
-            const firstCol = line.trim().split(/\s+/)[0];
-            const p = parseInt(firstCol, 10);
-            if (Number.isFinite(p) && p > 0) { pid = p; break; }
-          }
+          if (!line.includes(this.labelFor(id))) continue;
+          const firstCol = line.trim().split(/\s+/)[0];
+          const p = parseInt(firstCol, 10);
+          if (Number.isFinite(p) && p > 0) { pid = p; break; }
         }
       } catch {}
     }
     return { backend: 'launchd', running, pid, label: this.labelFor(id), plist: this.plistFor(id) };
+  }
+
+  /**
+   * P0-4: try to evict any leftover state for this id before re-starting.
+   * Earlier bugs (e.g. an empty id) registered labels like
+   * `com.runserver.undefined` that survive a `rm <plist>`; they cause
+   * subsequent `bootstrap` to fail with EIO. We replay the same unload
+   * flow on a path that may not exist, ignoring all errors.
+   */
+  async cleanup(id) {
+    const plistPath = this.plistFor(id);
+    try { await this._launchctl(['unload', plistPath]); } catch {}
+    try { await unlink(plistPath); } catch {}
   }
 
   _launchctl(args) {
@@ -225,7 +263,8 @@ async function readPid(id) {
   if (!existsSync(p)) return null;
   try {
     const v = (await readFile(p, 'utf8')).trim();
-    return parseInt(v, 10) || null;
+    const pid = parseInt(v, 10);
+    return Number.isFinite(pid) && pid > 0 ? pid : null;
   } catch {
     return null;
   }
@@ -235,6 +274,34 @@ async function openAppend(file) {
   const fs = await import('node:fs');
   const fd = fs.openSync(file, 'a');
   return { fd };
+}
+
+async function sendSignalOrSkip(id, pid, signal) {
+  try {
+    process.kill(pid, signal);
+    log.info(`${id}: sent ${signal} to pid ${pid}`);
+  } catch (e) {
+    if (e.code === 'ESRCH') {
+      log.warn(`${id}: pid ${pid} not alive`);
+    } else if (e.code === 'EPERM') {
+      log.warn(`${id}: pid ${pid} exists but no permission to signal`);
+    } else {
+      throw e;
+    }
+  }
+}
+
+async function waitForExit(id, pid, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try { process.kill(pid, 0); }
+    catch (e) {
+      if (e.code === 'ESRCH') return true;
+      if (e.code === 'EPERM') return true; // process still exists, not our problem
+    }
+    await new Promise((r) => setTimeout(r, STOP_POLL_MS));
+  }
+  return false;
 }
 
 async function resolveOnPath(cmd) {
@@ -252,16 +319,16 @@ async function resolveOnPath(cmd) {
   return null;
 }
 
-function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
 function xmlEscape(s) {
   return String(s).replace(/[<>&"']/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;' }[c]));
 }
 
-function renderPlist({ label, command, args, env, logFile, errFile }) {
-  const envLines = Object.entries(env)
+/**
+ * Render a launchd plist. Exported for unit tests.
+ * @param {{label:string, command:string, args:string[], env:Record<string,string>, logFile:string, errFile:string}} p
+ */
+export function renderPlist(p) {
+  const envLines = Object.entries(p.env || {})
     .map(([k, v]) => `      <key>${xmlEscape(k)}</key>\n      <string>${xmlEscape(v)}</string>`)
     .join('\n');
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -269,23 +336,47 @@ function renderPlist({ label, command, args, env, logFile, errFile }) {
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>${xmlEscape(label)}</string>
+  <string>${xmlEscape(p.label)}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${xmlEscape(command)}</string>
-${args.map((a) => `    <string>${xmlEscape(a)}</string>`).join('\n')}
+    <string>${xmlEscape(p.command)}</string>
+${p.args.map((a) => `    <string>${xmlEscape(a)}</string>`).join('\n')}
   </array>
 ${envLines ? `  <key>EnvironmentVariables</key>\n  <dict>\n${envLines}\n  </dict>\n` : ''}  <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>${xmlEscape(logFile)}</string>
+  <string>${xmlEscape(p.logFile)}</string>
   <key>StandardErrorPath</key>
-  <string>${xmlEscape(errFile)}</string>
+  <string>${xmlEscape(p.errFile)}</string>
 </dict>
 </plist>
 `;
 }
 
-export { RUNSERVER_HOME, PIDS_DIR, LOGS_DIR, ChildProcessManager, LaunchdManager };
+/** Parse a `KEY=value` env file. Supports `export`, optional quoting, comments. */
+export function parseEnvText(text) {
+  const out = {};
+  for (const raw of text.split('\n')) {
+    let line = raw.replace(/^#.*$/, '').trim();
+    if (!line) continue;
+    // accept leading "export "
+    line = line.replace(/^export\s+/, '');
+    const m = line.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+    if (!m) continue;
+    let v = m[2];
+    // strip surrounding single or double quotes
+    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+      v = v.slice(1, -1);
+    }
+    out[m[1]] = v;
+  }
+  return out;
+}
+
+export {
+  RUNSERVER_HOME, PIDS_DIR, LOGS_DIR,
+  ChildProcessManager, LaunchdManager,
+  ensurePaths, STOP_TIMEOUT_MS,
+};

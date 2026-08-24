@@ -7,10 +7,17 @@ export async function scan() {
   const projects = await listProjects();
   const manager = getDefaultManager();
   const results = await Promise.all(projects.map(async (p) => {
-    const detection = await p.detect();
+    let detection;
+    try {
+      detection = await p.detect();
+    } catch (e) {
+      // P2-21: a broken detect() must not break the whole scan
+      return null;
+    }
     if (!detection.installed) return null; // not installed → not shown
-    const spec = p.service ? await p.service() : null;
-    const status = spec ? await manager.status(p.id) : { running: false, backend: manager.constructor.name };
+    let spec = null;
+    try { spec = p.service ? await p.service() : null; } catch {}
+    const status = spec ? await manager.status(p.id).catch(() => ({ running: false, backend: manager.constructor.name })) : { running: false, backend: manager.constructor.name };
     return {
       id: p.id,
       name: p.name,
@@ -20,6 +27,7 @@ export async function scan() {
       note: detection.note,
       canStart: !!spec,
       ui: p.ui || {},
+      install: p.install || null,
       status,
     };
   }));

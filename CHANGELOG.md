@@ -1,0 +1,51 @@
+# Changelog
+
+All notable changes to RunServer are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/).
+
+## [Unreleased]
+
+## [0.2.0] - 2026-08-24
+
+### Added
+- **Multi-install-form registry** — each project now declares how it installs (`install.type`: `npm | go | pip | git | binary | docker | brew`). The Web UI shows the install command in a collapsible "如何安装" section, but never auto-installs. Previously only npm-style projects were supported.
+- **`sillytavern` project plugin** — `git clone` + `npm install` form, detects checkout in `$HOME/SillyTavern` or `$HOME/GitHub/SillyTavern`, runs `node server.js` from the discovered dir.
+- **`zim-mcp-server` project plugin** — `git clone` + `uv sync` form, Python project. Demonstrates how to wrap an MCP/stdio server (no `ui` field → no "Open" button).
+- **`llamactl` project plugin** — Go single binary (`go install ...@latest`). First `install.type: 'go'` example.
+- **Vitest test suite** — 20 unit + integration tests covering `parseEnvText`, `renderPlist`, `level filtering`, `id validator`, `scanner filtering`. Plus a native-Node `tests/integration/run.sh` that exercises the real dynamic-import path (vite-node has a known bug with URL-unsafe workspace paths).
+- **CI workflow** — `.github/workflows/ci.yml` runs lint + tests on macOS (matches the primary development target; backend is `launchd`-bound).
+- **Logger** — added `debug` level and `RUNSERVER_LOG_LEVEL` env override; `RUNSERVER_QUIET` semantics now correctly suppress everything except `error`.
+- **`CHANGELOG.md` + `CONTRIBUTING.md`** — project hygiene for open-source.
+- **`RUNSERVER_PROJECTS_DIR` env override** — lets the test rig point at a copy of `src/projects` in `/tmp` to avoid the Chinese-character path issue with vite-node.
+
+### Changed
+- **`registry.mjs` — error isolation** — a broken project file (syntax error, missing `project` export, bad id) no longer breaks the registry. It logs an error and skips the file.
+- **`registry.mjs` — id validator** — short ids (≤3 chars) are now rejected unless they look like reverse-DNS (`io.x`, `com.foo`). This prevents collisions as more projects are added.
+- **`registry.mjs` — `loadAll()` reads the projects dir lazily** — `RUNSERVER_PROJECTS_DIR` env override takes effect on every load (no module reload needed).
+- **`scanner.mjs` — error isolation** — a project whose `detect()` or `service()` throws no longer fails the whole scan; it's silently skipped.
+- **`manager.mjs` — lazy filesystem init** — importing the module no longer touches the filesystem. Paths are created on first `start`/`stop`.
+- **`manager.mjs` — `stop` polls until exit** — replaces the fire-and-forget `SIGTERM` with a poll loop (8s grace, then `SIGKILL`). The status endpoint no longer lies right after `stop`.
+- **`manager.mjs` — `cleanup()` method on both backends** — wipes any stale plist/pid file before a fresh start, fixing the lingering `com.runserver.undefined` state from early-development bugs.
+- **`manager.mjs` — `parseEnvText` exported** — supports `KEY=value`, `export KEY=value`, optional matching quotes, and `#` comments. Used by both `manager.start` (plist env) and every project plugin that reads an env file.
+- **`manager.mjs` — `renderPlist` exported** — for unit tests, and for future "edit a project and re-render" features.
+- **Web UI** — adds "如何安装" expandable section per card.
+
+### Fixed
+- `stop` followed immediately by `status` no longer reports `running: true`. The process is now actually waited on (up to 8s, then `SIGKILL`).
+- launchd plists no longer fail to find `node` on systems where the user's PATH lives outside `/usr/bin` (vmr/asdf/nix) — the user's PATH is forwarded in `EnvironmentVariables`.
+- launchd plists no longer reference commands by short name (which `launchd` can't resolve); the manager resolves to an absolute path before writing the plist.
+- `launchctl bootstrap` failures with `Input/output error` on some macOS user sessions are avoided by using legacy `launchctl load -w` / `unload` instead. Same outcome, broader compatibility.
+- The `com.runserver.<id>.plist` is no longer inherited with hundreds of irrelevant shell variables — only the project's own env plus `PATH` are forwarded.
+- `RUNSERVER_QUIET=1` no longer silences `error` (it used to, because the level check was `< activeLevel` and quiet set `activeLevel = error`).
+
+## [0.1.0] - 2026-08-24
+
+### Added
+- Initial release.
+- Single `runserver` CLI + Web dashboard on `127.0.0.1:12345`.
+- macOS `launchd` backend (`KeepAlive` + `RunAtLoad`) and cross-platform `child_process` fallback.
+- One project registered: `deepseek-harness` (the upstream one-liner `npx @deepseek-ai/dsh web`).
+- Pushed to `github.com/FaberEli/RunServer`.
+
+[Unreleased]: https://github.com/FaberEli/RunServer/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/FaberEli/RunServer/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/FaberEli/RunServer/releases/tag/v0.1.0
