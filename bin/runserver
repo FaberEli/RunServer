@@ -10,6 +10,13 @@
 #                                     <prefix>/share/runserver/src)
 #
 # We probe both paths so the same wrapper works for every install form.
+#
+# Node lookup: launchd inherits an essentially empty PATH
+# (/usr/bin:/bin/...). When brew services runs this wrapper, `node`
+# may not be on PATH even though the formula passes ENV["PATH"]
+# through (and that PATH is brew's own, which doesn't include
+# vmr/asdf/nix). So we actively scan the well-known runtime locations
+# and use whichever we find.
 set -euo pipefail
 SOURCE="${BASH_SOURCE[0]}"
 if command -v realpath >/dev/null 2>&1; then
@@ -35,4 +42,38 @@ if [ -z "$ENTRY" ]; then
   echo "runserver: cannot locate src/cli.mjs (looked in ${SCRIPT_DIR}/../src and ${SCRIPT_DIR}/../share/runserver/src)" >&2
   exit 127
 fi
-exec node "$ENTRY" "$@"
+
+# Find a Node.js binary. Order:
+#   1. PATH (catches Homebrew's /opt/homebrew/bin/node when installed)
+#   2. Common well-known runtime locations (vmr / asdf / nvm / linuxbrew)
+find_node() {
+  if command -v node >/dev/null 2>&1; then
+    command -v node
+    return 0
+  fi
+  local candidate
+  for candidate in \
+    "$HOME/.vmr/versions/node_versions/node/bin/node" \
+    "$HOME/.nvm/versions/node/bin/node" \
+    "$HOME/.asdf/shims/node" \
+    "$HOME/.local/share/mise/installs/node/*/bin/node" \
+    "/usr/local/bin/node" \
+    "/opt/homebrew/bin/node"; do
+    if [ -x "$candidate" ]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+NODE_BIN="$(find_node || true)"
+if [ -z "$NODE_BIN" ]; then
+  echo "runserver: cannot find a node runtime. Install one via:" >&2
+  echo "  - Homebrew:  brew install node" >&2
+  echo "  - vmr:       vmr use node@<version>" >&2
+  echo "  - asdf:      asdf install nodejs <version>" >&2
+  echo "  - nvm:       nvm install --lts" >&2
+  exit 127
+fi
+exec "$NODE_BIN" "$ENTRY" "$@"

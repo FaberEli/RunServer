@@ -4,6 +4,11 @@ All notable changes to RunServer are documented here. The format is based on [Ke
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-08-24
+
+### Fixed
+- **`bin/runserver` actively locates a node binary when PATH is empty.** Under `brew services start`, launchd runs the wrapper with an essentially empty PATH (`/usr/bin:/bin/...`). Even with the formula forwarding `ENV["PATH"]` to the plist, that PATH is Homebrew's own — it doesn't include user-managed runtimes (vmr / asdf / nvm / mise). The wrapper now scans well-known locations (`$HOME/.vmr/.../bin/node`, `$HOME/.nvm/.../bin/node`, `$HOME/.asdf/shims/node`, etc.) and uses whichever it finds. If none of them have node, the wrapper prints an actionable error pointing the user at the install path.
+
 ## [0.3.2] - 2026-08-24
 
 ### Fixed
