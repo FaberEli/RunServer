@@ -22,22 +22,39 @@ const SEARCH_DIRS = [
 
 async function findInstallDir() {
   for (const dir of SEARCH_DIRS) {
-    if (existsSync(path.join(dir, 'pyproject.toml')) && existsSync(path.join(dir, 'server.py'))) {
+    // `uv sync` writes .venv and uv.lock alongside pyproject.toml.
+    if (
+      existsSync(path.join(dir, 'pyproject.toml')) &&
+      existsSync(path.join(dir, 'server.py')) &&
+      existsSync(path.join(dir, '.venv'))
+    ) {
       return dir;
+    }
+  }
+  // partial: source cloned but `uv sync` not run
+  for (const dir of SEARCH_DIRS) {
+    if (existsSync(path.join(dir, 'pyproject.toml')) && existsSync(path.join(dir, 'server.py'))) {
+      return { dir, partial: true };
     }
   }
   return null;
 }
 
 async function detect() {
-  const dir = await findInstallDir();
-  if (!dir) {
+  const found = await findInstallDir();
+  if (!found) {
     return {
       installed: false,
       note: `not found in any of: ${SEARCH_DIRS.join(', ')}`,
     };
   }
-  // Pull version from pyproject.toml (no JSON, so quick string scan)
+  if (typeof found === 'object' && found.partial) {
+    return {
+      installed: false,
+      note: `found source at ${found.dir} but \`.venv\` is missing — run \`uv sync\` in that directory first`,
+    };
+  }
+  const dir = found;
   let version = null;
   try {
     const { readFile } = await import('node:fs/promises');
@@ -49,7 +66,8 @@ async function detect() {
 }
 
 async function service() {
-  const dir = await findInstallDir();
+  const found = await findInstallDir();
+  const dir = typeof found === 'string' ? found : (found && found.dir) || null;
   if (!dir) return null;
   return {
     command: 'uv',

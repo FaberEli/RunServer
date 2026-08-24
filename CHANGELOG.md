@@ -4,6 +4,12 @@ All notable changes to RunServer are documented here. The format is based on [Ke
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-08-24
+
+### Fixed
+- **launchd plist now sets `WorkingDirectory` when `spec.cwd` is provided.** Without it, any git-cloned Node project (e.g. SillyTavern) was launched with `node server.js` resolving to `/server.js` (Node's CWD-relative module resolver misinterpreted it as an absolute path). `renderPlist` now emits a `<key>WorkingDirectory</key>` block when `cwd` is set.
+- **`sillytavern` and `zim-mcp-server` detect now require a populated dependency tree** (`node_modules` / `.venv`) before reporting `installed: true`. Previously a bare `git clone` was enough to make the project appear in the UI, but `node server.js` would crash on the first missing import. The detect now returns a clear `installed: false` with a `note` like "found source at <dir> but `node_modules` is missing — run `npm install` in that directory first" so the user knows what to do.
+
 ## [0.2.0] - 2026-08-24
 
 ### Added
@@ -46,6 +52,7 @@ All notable changes to RunServer are documented here. The format is based on [Ke
 - One project registered: `deepseek-harness` (the upstream one-liner `npx @deepseek-ai/dsh web`).
 - Pushed to `github.com/FaberEli/RunServer`.
 
-[Unreleased]: https://github.com/FaberEli/RunServer/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/FaberEli/RunServer/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/FaberEli/RunServer/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/FaberEli/RunServer/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/FaberEli/RunServer/releases/tag/v0.1.0

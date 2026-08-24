@@ -160,6 +160,7 @@ class LaunchdManager {
       command,
       args: spec.args,
       env: { PATH: process.env.PATH || '/usr/bin:/bin', ...(spec.env || {}) },
+      cwd: spec.cwd,
       logFile,
       errFile,
     });
@@ -325,7 +326,7 @@ function xmlEscape(s) {
 
 /**
  * Render a launchd plist. Exported for unit tests.
- * @param {{label:string, command:string, args:string[], env:Record<string,string>, logFile:string, errFile:string}} p
+ * @param {{label:string, command:string, args:string[], env:Record<string,string>, logFile:string, errFile:string, cwd?:string}} p
  */
 export function renderPlist(p) {
   const envLines = Object.entries(p.env || {})
@@ -342,7 +343,7 @@ export function renderPlist(p) {
     <string>${xmlEscape(p.command)}</string>
 ${p.args.map((a) => `    <string>${xmlEscape(a)}</string>`).join('\n')}
   </array>
-${envLines ? `  <key>EnvironmentVariables</key>\n  <dict>\n${envLines}\n  </dict>\n` : ''}  <key>RunAtLoad</key>
+${envLines ? `  <key>EnvironmentVariables</key>\n  <dict>\n${envLines}\n  </dict>\n` : ''}${p.cwd ? `  <key>WorkingDirectory</key>\n  <string>${xmlEscape(p.cwd)}</string>\n` : ''}  <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
   <true/>

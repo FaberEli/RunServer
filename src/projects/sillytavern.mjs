@@ -2,20 +2,16 @@
 // Upstream: https://github.com/SillyTavern/SillyTavern
 // Install form: **git clone + npm install** — Node.js project, runs from a
 // local checkout. Detect by looking for a SillyTavern checkout in conventional
-// locations ($HOME/SillyTavern, $HOME/GitHub/SillyTavern). The service spec
-// uses the discovered checkout's directory as `cwd`.
+// locations ($HOME/SillyTavern, $HOME/GitHub/SillyTavern) AND a populated
+// `node_modules` (a bare `git clone` is not enough — `npm install` must
+// have been run, otherwise `node server.js` crashes on the first import).
 //
 // SillyTavern's `Start.bat` runs `node server.js`; we do the same.
 
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
-const execFileP = promisify(execFile);
-
-// Search paths for an existing SillyTavern checkout, in priority order.
 const SEARCH_DIRS = [
   path.join(os.homedir(), 'SillyTavern'),
   path.join(os.homedir(), 'GitHub', 'SillyTavern'),
@@ -24,22 +20,39 @@ const SEARCH_DIRS = [
 
 async function findInstallDir() {
   for (const dir of SEARCH_DIRS) {
-    if (existsSync(path.join(dir, 'package.json')) && existsSync(path.join(dir, 'server.js'))) {
+    if (
+      existsSync(path.join(dir, 'package.json')) &&
+      existsSync(path.join(dir, 'server.js')) &&
+      existsSync(path.join(dir, 'node_modules'))
+    ) {
       return dir;
+    }
+  }
+  // also surface a partial install so the UI can tell the user
+  // "you have the source but haven't run `npm install` yet"
+  for (const dir of SEARCH_DIRS) {
+    if (existsSync(path.join(dir, 'package.json')) && existsSync(path.join(dir, 'server.js'))) {
+      return { dir, partial: true };
     }
   }
   return null;
 }
 
 async function detect() {
-  const dir = await findInstallDir();
-  if (!dir) {
+  const found = await findInstallDir();
+  if (!found) {
     return {
       installed: false,
       note: `not found in any of: ${SEARCH_DIRS.join(', ')}`,
     };
   }
-  // Try to read the version field
+  if (typeof found === 'object' && found.partial) {
+    return {
+      installed: false,
+      note: `found source at ${found.dir} but \`node_modules\` is missing — run \`npm install\` in that directory first`,
+    };
+  }
+  const dir = found;
   let version = null;
   try {
     const { readFile } = await import('node:fs/promises');
@@ -50,7 +63,8 @@ async function detect() {
 }
 
 async function service() {
-  const dir = await findInstallDir();
+  const found = await findInstallDir();
+  const dir = typeof found === 'string' ? found : (found && found.dir) || null;
   if (!dir) return null;
   return {
     command: 'node',
@@ -74,3 +88,4 @@ export const project = {
   service,
   ui: { port: 8000, url: 'http://127.0.0.1:8000', label: 'Web UI' },
 };
+

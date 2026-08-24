@@ -78,6 +78,23 @@ describe('renderPlist', () => {
     });
     expect(xml).not.toContain('EnvironmentVariables');
   });
+
+  it('emits WorkingDirectory when cwd is set', () => {
+    const xml = renderPlist({
+      label: 'l', command: '/c', args: ['x'], env: {},
+      logFile: '/a', errFile: '/b', cwd: '/var/svc/foo',
+    });
+    expect(xml).toContain('<key>WorkingDirectory</key>');
+    expect(xml).toContain('<string>/var/svc/foo</string>');
+  });
+
+  it('omits WorkingDirectory when cwd is not set', () => {
+    const xml = renderPlist({
+      label: 'l', command: '/c', args: [], env: {},
+      logFile: '/a', errFile: '/b',
+    });
+    expect(xml).not.toContain('WorkingDirectory');
+  });
 });
 
 describe('manager constants', () => {
