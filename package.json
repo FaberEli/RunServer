@@ -1,0 +1,32 @@
+{
+  "name": "runserver",
+  "version": "0.1.0",
+  "description": "Local services manager for recorded open-source projects. Single Web UI (port 12345) to start/stop/restart things like DeepSeek Harness, plus CLI and Homebrew integration.",
+  "type": "module",
+  "bin": {
+    "runserver": "bin/runserver"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "start": "node src/cli.mjs web",
+    "scan": "node src/cli.mjs scan",
+    "list": "node src/cli.mjs list",
+    "status": "node src/cli.mjs status"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "license": "MIT",
+  "keywords": [
+    "runserver",
+    "service-manager",
+    "deepseek-harness",
+    "dsh",
+    "homebrew"
+  ]
+}

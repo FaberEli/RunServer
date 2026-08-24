@@ -1,0 +1,124 @@
+// RunServer Web UI — serves the project dashboard on http://127.0.0.1:12345
+// Three route classes: static HTML, JSON APIs, action endpoints.
+import http from 'node:http';
+import { readFile, stat } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { scan } from './scanner.mjs';
+import { listProjects, getProject } from './registry.mjs';
+import { getDefaultManager } from './manager.mjs';
+import { log } from './logger.mjs';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const WEB_DIR = path.join(__dirname, 'web');
+const HOST = process.env.RUNSERVER_HOST || '127.0.0.1';
+const PORT = parseInt(process.env.RUNSERVER_PORT || '12345', 10);
+const SERVER_NAME = `RunServer/${(await readPackageVersion())}`;
+
+async function readPackageVersion() {
+  try {
+    const pkg = JSON.parse(await readFile(path.join(__dirname, '..', 'package.json'), 'utf8'));
+    return pkg.version || '0.0.0';
+  } catch { return '0.0.0'; }
+}
+
+const MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+};
+
+function sendJson(res, status, body) {
+  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
+  res.end(JSON.stringify(body));
+}
+
+function sendText(res, status, body, contentType = 'text/plain; charset=utf-8') {
+  res.writeHead(status, { 'Content-Type': contentType });
+  res.end(body);
+}
+
+async function readBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => {
+      const raw = Buffer.concat(chunks).toString('utf8');
+      if (!raw) return resolve({});
+      try { resolve(JSON.parse(raw)); } catch (e) { reject(new Error('invalid JSON body')); }
+    });
+    req.on('error', reject);
+  });
+}
+
+const manager = getDefaultManager();
+
+const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const method = req.method || 'GET';
+  log.info(`${method} ${url.pathname}`);
+
+  try {
+    if (method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
+      const html = await readFile(path.join(WEB_DIR, 'index.html'));
+      return sendText(res, 200, html, MIME['.html']);
+    }
+
+    if (method === 'GET' && url.pathname === '/api/projects') {
+      const projects = await scan();
+      return sendJson(res, 200, { backend: manager.constructor.name, projects });
+    }
+
+    if (method === 'GET' && url.pathname === '/api/all-projects') {
+      const all = await listProjects();
+      return sendJson(res, 200, { projects: all.map((p) => ({ id: p.id, name: p.name, description: p.description })) });
+    }
+
+    const actionMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/(start|stop|restart)$/);
+    if (method === 'POST' && actionMatch) {
+      const [, id, action] = actionMatch;
+      const project = await getProject(id);
+      if (!project) return sendText(res, 404, `unknown project: ${id}`);
+
+      const spec = action === 'stop' ? null : await project.service();
+      if (action !== 'stop' && !spec) {
+        return sendText(res, 409, `${id}: project not installed or no service spec available`);
+      }
+
+      if (action === 'start') {
+        await manager.start({ id, ...spec });
+      } else if (action === 'stop') {
+        await manager.stop(id);
+      } else if (action === 'restart') {
+        await manager.restart({ id, ...spec });
+      }
+      return sendJson(res, 200, { ok: true, id, action });
+    }
+
+    if (method === 'GET' && url.pathname === '/api/health') {
+      return sendJson(res, 200, { ok: true, name: SERVER_NAME, platform: process.platform, backend: manager.constructor.name });
+    }
+
+    return sendText(res, 404, 'not found');
+  } catch (e) {
+    log.error(`${method} ${url.pathname}: ${e.message}`);
+    return sendJson(res, 500, { error: e.message });
+  }
+});
+
+export async function startWeb() {
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(PORT, HOST, () => {
+      const addr = server.address();
+      log.ok(`Web UI listening on http://${addr.address}:${addr.port}`);
+      log.ok(`Backend: ${manager.constructor.name} on ${process.platform}`);
+      resolve({ host: addr.address, port: addr.port, server });
+    });
+  });
+}
+
+export { server, HOST, PORT };

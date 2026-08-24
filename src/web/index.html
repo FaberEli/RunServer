@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>RunServer</title>
+<style>
+  :root {
+    --bg: #0f1115; --fg: #e6e8ea; --muted: #81858c; --border: #2a2e35;
+    --card: #16191f; --accent: #679efe; --ok: #3ecf8e; --warn: #f5a623; --err: #ef4444;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", "PingFang SC", sans-serif; background: var(--bg); color: var(--fg); }
+  header { padding: 20px 28px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+  header h1 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: 0.4px; }
+  header .backend { font-size: 12px; color: var(--muted); }
+  main { max-width: 920px; margin: 0 auto; padding: 28px 20px 80px; }
+  .toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; gap: 12px; flex-wrap: wrap; }
+  .toolbar h2 { margin: 0; font-size: 14px; color: var(--muted); font-weight: 500; text-transform: uppercase; letter-spacing: 0.6px; }
+  .toolbar .actions { display: flex; gap: 8px; }
+  .empty { padding: 60px 20px; text-align: center; color: var(--muted); border: 1px dashed var(--border); border-radius: 12px; }
+  .empty code { background: var(--card); padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+  .grid { display: grid; grid-template-columns: 1fr; gap: 14px; }
+  @media (min-width: 720px) { .grid { grid-template-columns: 1fr 1fr; } }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 18px; display: flex; flex-direction: column; gap: 10px; }
+  .card h3 { margin: 0; font-size: 16px; display: flex; align-items: center; gap: 10px; }
+  .card .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--border); color: var(--muted); }
+  .card .badge.running { background: rgba(62, 207, 142, 0.16); color: var(--ok); }
+  .card .badge.stopped { background: rgba(245, 166, 35, 0.16); color: var(--warn); }
+  .card .desc { color: var(--muted); font-size: 13px; line-height: 1.55; }
+  .card .meta { font-size: 12px; color: var(--muted); }
+  .card .meta code { background: var(--bg); padding: 1px 5px; border-radius: 4px; }
+  .card .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  button { font: inherit; cursor: pointer; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); transition: 0.12s; }
+  button:hover { border-color: var(--accent); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary:hover { filter: brightness(1.1); }
+  button.danger:hover { border-color: var(--err); color: var(--err); }
+  .log { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; background: #000; color: #c9d1d9; padding: 10px 12px; border-radius: 8px; max-height: 220px; overflow: auto; white-space: pre-wrap; }
+  footer { text-align: center; color: var(--muted); font-size: 12px; padding: 20px; border-top: 1px solid var(--border); }
+  footer code { color: var(--fg); }
+  .toast { position: fixed; bottom: 24px; right: 24px; background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; font-size: 13px; opacity: 0; transition: 0.2s; pointer-events: none; }
+  .toast.show { opacity: 1; }
+  .toast.ok { border-color: var(--ok); }
+  .toast.err { border-color: var(--err); color: var(--err); }
+</style>
+</head>
+<body>
+<header>
+  <h1>RunServer</h1>
+  <div class="backend" id="backend">…</div>
+</header>
+<main>
+  <div class="toolbar">
+    <h2>已记录的本地服务</h2>
+    <div class="actions">
+      <button id="refresh" title="重新扫描本地安装">↻ 刷新</button>
+    </div>
+  </div>
+  <div id="content" class="grid"></div>
+  <div id="log" class="log" style="margin-top: 18px; display: none;"></div>
+</main>
+<footer>
+  RunServer · 本地服务管理平台 · 后端: <code id="backend-footer">…</code>
+</footer>
+<div id="toast" class="toast"></div>
+<script>
+const $ = (s) => document.querySelector(s);
+const grid = $('#content');
+const logEl = $('#log');
+const backendEl = $('#backend');
+const backendFooter = $('#backend-footer');
+let backend = 'unknown';
+
+function toast(msg, kind = 'ok') {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.className = `toast show ${kind}`;
+  setTimeout(() => t.className = 'toast', 2200);
+}
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...opts });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `${res.status} ${res.statusText}`);
+  }
+  return res.json();
+}
+
+function renderEmpty() {
+  grid.classList.remove('grid');
+  grid.innerHTML = `
+    <div class="empty">
+      <p>本地没有已记录的开源项目。</p>
+      <p style="font-size: 13px;">先安装一个, 例如: <code>npm i -g @deepseek-ai/dsh</code> 然后点 ↻ 刷新。</p>
+    </div>`;
+}
+
+function renderCard(p) {
+  const running = p.status && p.status.running;
+  const badge = running
+    ? `<span class="badge running">运行中</span>`
+    : `<span class="badge stopped">已停止</span>`;
+  const openBtn = p.ui && p.ui.url
+    ? `<a href="${p.ui.url}" target="_blank" rel="noreferrer"><button>${p.ui.label || '打开'}</button></a>`
+    : '';
+  const pidInfo = p.status && p.status.pid ? `pid ${p.status.pid}` : (p.status && p.status.label ? p.status.label : '');
+  return `
+    <div class="card" data-id="${p.id}">
+      <h3>${p.name} ${badge}</h3>
+      <div class="desc">${p.description}</div>
+      <div class="meta">
+        ${p.version ? `version <code>${p.version}</code> · ` : ''}${p.note || ''} ${pidInfo ? `· ${pidInfo}` : ''}
+      </div>
+      <div class="row">
+        <button class="primary" data-act="start" ${running || !p.canStart ? 'disabled' : ''}>启动</button>
+        <button data-act="stop" ${!running ? 'disabled' : ''}>停止</button>
+        <button data-act="restart" ${!running ? 'disabled' : ''}>重启</button>
+        ${openBtn}
+      </div>
+    </div>`;
+}
+
+async function refresh() {
+  grid.classList.add('grid');
+  try {
+    const data = await api('/api/projects');
+    backend = data.backend || 'unknown';
+    backendEl.textContent = `后端: ${backend}`;
+    backendFooter.textContent = backend;
+    if (!data.projects.length) {
+      renderEmpty();
+      logEl.style.display = 'none';
+      return;
+    }
+    grid.innerHTML = data.projects.map(renderCard).join('');
+    grid.querySelectorAll('button[data-act]').forEach((btn) => {
+      btn.addEventListener('click', () => act(btn.closest('.card').dataset.id, btn.dataset.act));
+    });
+  } catch (e) {
+    toast('加载失败: ' + e.message, 'err');
+  }
+}
+
+async function act(id, action) {
+  try {
+    const result = await api(`/api/projects/${id}/${action}`, { method: 'POST' });
+    toast(`${id}: ${action} ✓`, 'ok');
+    if (result.log) {
+      logEl.style.display = 'block';
+      logEl.textContent = result.log;
+    } else {
+      logEl.style.display = 'none';
+    }
+    setTimeout(refresh, 800);
+  } catch (e) {
+    toast(`${id}: ${action} 失败 — ${e.message}`, 'err');
+  }
+}
+
+$('#refresh').addEventListener('click', refresh);
+refresh();
+</script>
+</body>
+</html>

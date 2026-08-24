@@ -1,0 +1,9 @@
+.DS_Store
+node_modules/
+*.log
+*.pid
+.idea/
+.vscode/
+*.swp
+*~
+.bottle*

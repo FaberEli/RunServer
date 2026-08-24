@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# RunServer CLI entry — resolves the real entry script relative to this file
+# so `npm link`, `npm i -g`, and Homebrew installs all work.
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec node "${SCRIPT_DIR}/../src/cli.mjs" "$@"
