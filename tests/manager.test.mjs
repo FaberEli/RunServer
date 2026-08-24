@@ -1,7 +1,7 @@
 // Critical-path tests for the manager. Pure functions + plist XML — no
 // process spawns here (those are exercised by hand + integration scripts).
 import { describe, it, expect } from 'vitest';
-import { renderPlist, parseEnvText, RUNSERVER_HOME } from '../src/manager.mjs';
+import { renderPlist, renderSystemdUnit, parseEnvText, RUNSERVER_HOME } from '../src/manager.mjs';
 
 describe('parseEnvText', () => {
   it('parses KEY=value lines', () => {
@@ -102,5 +102,62 @@ describe('manager constants', () => {
     // RUNSERVER_HOME may be overridden by the test runner; we just check shape
     expect(typeof RUNSERVER_HOME).toBe('string');
     expect(RUNSERVER_HOME.length).toBeGreaterThan(0);
+  });
+});
+
+describe('renderSystemdUnit', () => {
+  it('emits a valid user unit with ExecStart, env, and append logs', () => {
+    const unit = renderSystemdUnit({
+      description: 'RunServer-managed foo',
+      command: '/usr/local/bin/foo',
+      args: ['serve', '--port', '8080'],
+      env: { PATH: '/usr/bin:/bin', FOO: 'bar' },
+      logFile: '/tmp/out.log',
+      errFile: '/tmp/err.log',
+    });
+    expect(unit).toContain('[Unit]');
+    expect(unit).toContain('Description=RunServer-managed foo');
+    expect(unit).toContain('[Service]');
+    expect(unit).toContain('Type=simple');
+    expect(unit).toContain('ExecStart=/usr/local/bin/foo serve --port 8080');
+    expect(unit).toContain('Environment="PATH=/usr/bin:/bin"');
+    expect(unit).toContain('Environment="FOO=bar"');
+    expect(unit).toContain('Restart=on-failure');
+    expect(unit).toContain('StandardOutput=append:/tmp/out.log');
+    expect(unit).toContain('StandardError=append:/tmp/err.log');
+    expect(unit).toContain('[Install]');
+    expect(unit).toContain('WantedBy=default.target');
+  });
+
+  it('emits WorkingDirectory when cwd is set', () => {
+    const unit = renderSystemdUnit({
+      description: 'd', command: '/c', args: ['x'], env: {},
+      logFile: '/a', errFile: '/b', cwd: '/var/svc/foo',
+    });
+    expect(unit).toContain('WorkingDirectory=/var/svc/foo');
+  });
+
+  it('omits WorkingDirectory when not set', () => {
+    const unit = renderSystemdUnit({
+      description: 'd', command: '/c', args: [], env: {},
+      logFile: '/a', errFile: '/b',
+    });
+    expect(unit).not.toContain('WorkingDirectory=');
+  });
+
+  it('omits Environment lines when env is empty', () => {
+    const unit = renderSystemdUnit({
+      description: 'd', command: '/c', args: [], env: {},
+      logFile: '/a', errFile: '/b',
+    });
+    expect(unit).not.toContain('Environment=');
+  });
+
+  it('xml-escapes special characters in env values', () => {
+    const unit = renderSystemdUnit({
+      description: 'd', command: '/c', args: [], env: { FOO: 'a"b&c' },
+      logFile: '/a', errFile: '/b',
+    });
+    expect(unit).toContain('Environment="FOO=a&quot;b&amp;c"');
   });
 });

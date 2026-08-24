@@ -84,6 +84,7 @@ const logEl = $('#log');
 const backendEl = $('#backend');
 const backendFooter = $('#backend-footer');
 let backend = 'unknown';
+let eventSource = null;
 
 function toast(msg, kind = 'ok') {
   const t = $('#toast');
@@ -99,6 +100,26 @@ async function api(path, opts = {}) {
     throw new Error(text || `${res.status} ${res.statusText}`);
   }
   return res.json();
+}
+
+// Render the data we already get from a project list response.
+function renderData(data) {
+  backend = data.backend || 'unknown';
+  backendEl.textContent = `后端: ${backend}`;
+  backendFooter.textContent = backend;
+  if (!data.projects.length) {
+    renderEmpty();
+    logEl.style.display = 'none';
+    return;
+  }
+  grid.classList.add('grid');
+  grid.innerHTML = data.projects.map(renderCard).join('');
+  grid.querySelectorAll('button[data-act]').forEach((btn) => {
+    btn.addEventListener('click', () => act(btn.closest('.card').dataset.id, btn.dataset.act));
+  });
+  grid.querySelectorAll('.port-input').forEach((inp) => {
+    inp.addEventListener('change', () => setPort(inp.dataset.id, inp.value));
+  });
 }
 
 function renderEmpty() {
@@ -144,24 +165,13 @@ function renderCard(p) {
 }
 
 async function refresh() {
+  // If we already have an SSE stream, do nothing — it will push updates.
+  if (eventSource) return;
+  // Fall back to a one-shot fetch for the initial render.
   grid.classList.add('grid');
   try {
     const data = await api('/api/projects');
-    backend = data.backend || 'unknown';
-    backendEl.textContent = `后端: ${backend}`;
-    backendFooter.textContent = backend;
-    if (!data.projects.length) {
-      renderEmpty();
-      logEl.style.display = 'none';
-      return;
-    }
-    grid.innerHTML = data.projects.map(renderCard).join('');
-    grid.querySelectorAll('button[data-act]').forEach((btn) => {
-      btn.addEventListener('click', () => act(btn.closest('.card').dataset.id, btn.dataset.act));
-    });
-    grid.querySelectorAll('.port-input').forEach((inp) => {
-      inp.addEventListener('change', () => setPort(inp.dataset.id, inp.value));
-    });
+    renderData(data);
   } catch (e) {
     toast('加载失败: ' + e.message, 'err');
   }
@@ -174,6 +184,24 @@ async function setPort(id, value) {
     toast(`${id}: port → ${result.override ?? '(默认)'}`, 'ok');
   } catch (e) {
     toast(`port 修改失败: ${e.message}`, 'err');
+  }
+}
+
+// SSE — auto-refresh cards when the server says something changed.
+function startEventStream() {
+  if (eventSource) return;
+  try {
+    eventSource = new EventSource('/api/events');
+    eventSource.addEventListener('projects', (ev) => {
+      try { renderData(JSON.parse(ev.data)); }
+      catch (e) { /* ignore parse errors */ }
+    });
+    eventSource.addEventListener('error', () => {
+      // EventSource auto-reconnects; just keep the page functional.
+    });
+  } catch (e) {
+    // SSE not supported — fall back to manual refresh.
+    console.warn('SSE unavailable:', e);
   }
 }
 
@@ -194,6 +222,7 @@ async function act(id, action) {
 }
 
 $('#refresh').addEventListener('click', refresh);
+startEventStream();
 refresh();
 </script>
 </body>

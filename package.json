@@ -1,6 +1,6 @@
 {
   "name": "runserver",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "description": "Local services manager for recorded open-source projects. Single Web UI (port 12345) to start/stop/restart things like DeepSeek Harness, plus CLI and Homebrew integration.",
   "type": "module",
   "bin": {

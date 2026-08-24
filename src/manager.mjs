@@ -258,17 +258,111 @@ class LaunchdManager {
   }
 }
 
+// ─── SystemdManager (Linux, user-level systemd) ────────────────────
+class SystemdManager {
+  constructor() {
+    if (process.platform !== 'linux') {
+      throw new Error('SystemdManager is Linux-only');
+    }
+  }
+  unitName(id) { return `runserver-${id}.service`; }
+  unitPath(id) {
+    const xdgConfig = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+    return path.join(xdgConfig, 'systemd', 'user', this.unitName(id));
+  }
+
+  async start(spec) {
+    await ensurePaths();
+    await this.cleanup(spec.id);
+
+    // Same PATH + symlink resolution as launchd path.
+    let command = spec.command;
+    if (!path.isAbsolute(command)) {
+      const abs = await resolveOnPath(command);
+      if (!abs) {
+        throw new Error(`${spec.id}: command '${command}' not found in PATH — install it first`);
+      }
+      command = abs;
+    }
+    const logFile = path.join(LOGS_DIR, `${spec.id}.log`);
+    const errFile = path.join(LOGS_DIR, `${spec.id}.error.log`);
+
+    const env = { PATH: process.env.PATH || '/usr/bin:/bin', ...(spec.env || {}) };
+    const unit = renderSystemdUnit({
+      description: `RunServer-managed ${spec.id}`,
+      command,
+      args: spec.args,
+      env,
+      cwd: spec.cwd,
+      logFile,
+      errFile,
+    });
+    const unitPath = this.unitPath(spec.id);
+    await mkdir(path.dirname(unitPath), { recursive: true });
+    await writeFile(unitPath, unit);
+
+    try {
+      await this._systemctl(['--user', 'daemon-reload']);
+      await this._systemctl(['--user', 'enable', '--now', this.unitName(spec.id)]);
+      log.ok(`${spec.id}: registered as systemd user unit (${unitPath}, ${command})`);
+    } catch (e) {
+      log.error(`${spec.id}: systemctl enable failed: ${e.message}`);
+      throw e;
+    }
+    return spec;
+  }
+
+  async stop(id) {
+    const unitPath = this.unitPath(id);
+    try {
+      await this._systemctl(['--user', 'disable', '--now', this.unitName(id)]);
+      log.ok(`${id}: systemd unit disabled and stopped`);
+    } catch (e) {
+      log.warn(`${id}: systemctl disable failed (${e.message})`);
+    }
+    try { await unlink(unitPath); } catch {}
+  }
+
+  async restart(spec) {
+    await this.stop(spec.id);
+    await this.start(spec);
+  }
+
+  async isRunning(id) {
+    try {
+      const { stdout } = await this._systemctl(['--user', 'is-active', this.unitName(id)]);
+      return stdout.trim() === 'active';
+    } catch (e) {
+      return false;
+    }
+  }
+
+  async status(id) {
+    const running = await this.isRunning(id);
+    return { backend: 'systemd', running, label: this.unitName(id), plist: this.unitPath(id) };
+  }
+
+  async cleanup(id) {
+    try { await this._systemctl(['--user', 'disable', '--now', this.unitName(id)]); } catch {}
+    try { await unlink(this.unitPath(id)); } catch {}
+  }
+
+  _systemctl(args) {
+    return execFileP('systemctl', args);
+  }
+}
+
 // ─── Factory + default selection ────────────────────────────────────
 export function getDefaultManager() {
-  if (process.platform === 'darwin') {
-    return new LaunchdManager();
-  }
-  // TODO: linux → SystemdManager (write ~/.config/systemd/user/<id>.service + systemctl --user)
+  if (process.platform === 'darwin') return new LaunchdManager();
+  if (process.platform === 'linux') return new SystemdManager();
+  // Windows / others — child_process fallback.
   return new ChildProcessManager();
 }
 
 export function listAvailableBackends() {
-  return ['launchd', 'child_process'];
+  const list = ['launchd', 'systemd', 'child_process'];
+  return list;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────
@@ -389,9 +483,35 @@ export function parseEnvText(text) {
   return out;
 }
 
+/**
+ * Render a systemd user-level unit file. Exported for unit tests.
+ * @param {{description:string, command:string, args:string[], env:Record<string,string>, cwd?:string, logFile:string, errFile:string}} u
+ */
+export function renderSystemdUnit(u) {
+  const envLines = Object.entries(u.env || {})
+    .map(([k, v]) => `Environment="${xmlEscape(k)}=${xmlEscape(v)}"`)
+    .join('\n');
+  const execLine = [xmlEscape(u.command), ...u.args.map(a => xmlEscape(a))].join(' ');
+  return `[Unit]
+Description=${xmlEscape(u.description)}
+After=network.target
+
+[Service]
+Type=simple
+${u.cwd ? `WorkingDirectory=${xmlEscape(u.cwd)}\n` : ''}ExecStart=${execLine}
+${envLines ? envLines + '\n' : ''}Restart=on-failure
+RestartSec=5
+StandardOutput=append:${xmlEscape(u.logFile)}
+StandardError=append:${xmlEscape(u.errFile)}
+
+[Install]
+WantedBy=default.target
+`;
+}
+
 export {
   RUNSERVER_HOME, PIDS_DIR, LOGS_DIR,
-  ChildProcessManager, LaunchdManager,
+  ChildProcessManager, LaunchdManager, SystemdManager,
   ensurePaths, STOP_TIMEOUT_MS,
 };
 

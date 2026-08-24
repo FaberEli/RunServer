@@ -4,6 +4,16 @@ All notable changes to RunServer are documented here. The format is based on [Ke
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-24
+
+### Added
+- **`SystemdManager` backend for Linux.** Writes a `~/.config/systemd/user/runserver-<id>.service` unit and `systemctl --user enable --now`s it. Survives reboots and restarts on failure (5s delay). The factory `getDefaultManager()` now picks `SystemdManager` on `process.platform === 'linux'`. RunServer is no longer macOS-only.
+- **Server-Sent Events on `/api/events`.** The Web UI now uses `EventSource` to receive a fresh `scan()` every 2s instead of polling. Cards update in real time when a project starts/stops/restarts. Falls back gracefully to manual refresh if SSE isn't supported.
+- **`README.zh.md`** — full Chinese translation of the README. Linked from the English README at the top.
+
+### Tests
+- `tests/manager.test.mjs` now covers `renderSystemdUnit` (5 new tests). 45 tests, all passing.
+
 ## [0.3.3] - 2026-08-24
 
 ### Fixed

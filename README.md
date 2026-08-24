@@ -2,6 +2,8 @@
 
 > A local services manager for **recorded open-source projects**. One Web UI (port `12345`) lists every project you have installed locally, with start / stop / restart buttons. CLI and registry-extensible.
 
+**[English](README.md)** | [中文](README.zh.md)
+
 [![Node](https://img.shields.io/badge/node-%E2%89%A520-brightgreen)](https://nodejs.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-20%2F20%20passing-brightgreen)](tests)

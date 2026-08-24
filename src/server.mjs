@@ -76,6 +76,35 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { backend: manager.constructor.name, projects });
     }
 
+    // SSE: server-sent events. Streams status updates every 2s so the Web
+    // UI doesn't have to poll. Client connects with new EventSource('/api/events').
+    if (method === 'GET' && url.pathname === '/api/events') {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache, no-transform',
+        'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      });
+      res.write(': runserver events stream\n\n');
+      let aborted = false;
+      req.on('close', () => { aborted = true; });
+      const interval = setInterval(async () => {
+        if (aborted) { clearInterval(interval); return; }
+        try {
+          const projects = await scan();
+          res.write(`event: projects\ndata: ${JSON.stringify({ backend: manager.constructor.name, projects })}\n\n`);
+        } catch (e) {
+          res.write(`event: error\ndata: ${JSON.stringify({ error: e.message })}\n\n`);
+        }
+      }, 2000);
+      // initial push so the client gets data without waiting 2s
+      try {
+        const projects = await scan();
+        res.write(`event: projects\ndata: ${JSON.stringify({ backend: manager.constructor.name, projects })}\n\n`);
+      } catch {}
+      return; // do not call res.end() — keep the stream open
+    }
+
     if (method === 'GET' && url.pathname === '/api/all-projects') {
       const all = await listProjects();
       return sendJson(res, 200, { projects: all.map((p) => ({ id: p.id, name: p.name, description: p.description })) });
