@@ -4,6 +4,11 @@ All notable changes to RunServer are documented here. The format is based on [Ke
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-08-24
+
+### Fixed
+- **`bin/runserver` now locates `src/cli.mjs` correctly under Homebrew.** When installed via Homebrew, `bin.install` places `bin/runserver` in `<prefix>/bin/` (symlinked from `Cellar/<name>/<ver>/bin/`), but `pkgshare.install "src"` lands the source under `<prefix>/share/runserver/src/`. The wrapper was looking at `bin/../src/cli.mjs`, which doesn't exist. The wrapper now probes both `../src/cli.mjs` (npm / source installs) and `../share/runserver/src/cli.mjs` (Homebrew) and uses whichever it finds.
+
 ## [0.3.1] - 2026-08-24
 
 ### Fixed
