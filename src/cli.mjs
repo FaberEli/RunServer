@@ -1,24 +1,27 @@
-// RunServer CLI — subcommands: web, start, stop, restart, status, list, scan.
-// Uses only node:util.parseArgs so the package stays zero-dep.
+// RunServer CLI — subcommands: web, start, stop, restart, status, list, scan, port, info.
 import { parseArgs } from 'node:util';
 import { startWeb } from './server.mjs';
 import { scan } from './scanner.mjs';
 import { listProjects, getProject } from './registry.mjs';
 import { getDefaultManager, RUNSERVER_HOME } from './manager.mjs';
+import { extractPortFromSpec } from './ports.mjs';
+import { getPortOverride, setPortOverride, clearPortOverride, getWebPort, setWebPort, loadConfig } from './config.mjs';
 import { log } from './logger.mjs';
 
 function usage() {
   return `RunServer — local services manager
 
 Usage:
-  runserver web                    Start the Web UI on http://127.0.0.1:12345
-  runserver start <project-id>     Start a registered project
-  runserver stop <project-id>      Stop a running project
-  runserver restart <project-id>   Restart a project
-  runserver status [project-id]    Show all (or one) projects' status
-  runserver list                   List all registered projects
-  runserver scan                   Rescan local installations
-  runserver info                   Show backend + paths
+  runserver web [--port N] [--host H]   Start the Web UI (default :12345)
+  runserver start <project-id>          Start a registered project
+  runserver stop <project-id>           Stop a running project
+  runserver restart <project-id>        Restart a project
+  runserver status [project-id]         Show all (or one) projects' status
+  runserver list                        List all registered projects
+  runserver scan                        Rescan local installations
+  runserver port <project-id> [<port>]  Read or set a project's port override
+  runserver web-port [<port>]           Read or set the Web UI port
+  runserver info                        Show backend + paths
   runserver --help
 
 Env:
@@ -34,6 +37,8 @@ async function main() {
     options: {
       help: { type: 'boolean', short: 'h' },
       version: { type: 'boolean', short: 'v' },
+      port: { type: 'string' },
+      host: { type: 'string' },
     },
   });
 
@@ -53,24 +58,24 @@ async function main() {
 
   switch (cmd) {
     case 'web': {
+      if (values.port) process.env.RUNSERVER_PORT = String(values.port);
+      if (values.host) process.env.RUNSERVER_HOST = String(values.host);
       await startWeb();
-      // Keep process alive
       return new Promise(() => {});
     }
     case 'start': {
       if (!arg) throw new Error('start requires a project id');
       const project = await getProject(arg);
       if (!project) throw new Error(`unknown project: ${arg}`);
-      const spec = await project.service();
-      if (!spec) throw new Error(`${arg}: not installed or no service spec`);
-      await manager.start({ id: arg, ...spec });
-      log.ok(`${arg}: started`);
+      const spec = { id: arg, ...(await project.service()) };
+      if (!spec.command) throw new Error(`${arg}: not installed or no service spec`);
+      const finalSpec = await manager.start(spec);
+      const actualPort = finalSpec?._resolvedPort ?? extractPortFromSpec(spec);
+      log.ok(`${arg}: started${actualPort ? ` on :${actualPort}` : ''}`);
       break;
     }
     case 'stop': {
       if (!arg) throw new Error('stop requires a project id');
-      const project = await getProject(arg);
-      if (!project) throw new Error(`unknown project: ${arg}`);
       await manager.stop(arg);
       log.ok(`${arg}: stopped`);
       break;
@@ -79,9 +84,9 @@ async function main() {
       if (!arg) throw new Error('restart requires a project id');
       const project = await getProject(arg);
       if (!project) throw new Error(`unknown project: ${arg}`);
-      const spec = await project.service();
-      if (!spec) throw new Error(`${arg}: not installed or no service spec`);
-      await manager.restart({ id: arg, ...spec });
+      const spec = { id: arg, ...(await project.service()) };
+      if (!spec.command) throw new Error(`${arg}: not installed or no service spec`);
+      await manager.restart(spec);
       log.ok(`${arg}: restarted`);
       break;
     }
@@ -118,6 +123,36 @@ async function main() {
       log.info(`scanned: ${projects.length} installed`);
       for (const p of projects) {
         process.stdout.write(`  ✓ ${p.id} ${p.version || ''}\n`);
+      }
+      break;
+    }
+    case 'port': {
+      if (!arg) throw new Error('port requires a project id');
+      const port = positionals[2];
+      if (port === undefined) {
+        const current = await getPortOverride(arg);
+        process.stdout.write(current ? `${arg}: ${current}\n` : `${arg}: (no override)\n`);
+      } else if (port === 'clear' || port === 'reset') {
+        await clearPortOverride(arg);
+        process.stdout.write(`${arg}: override cleared\n`);
+      } else {
+        const n = parseInt(port, 10);
+        if (!Number.isFinite(n)) throw new Error(`invalid port: ${port}`);
+        await setPortOverride(arg, n);
+        process.stdout.write(`${arg}: port set to ${n}\n`);
+      }
+      break;
+    }
+    case 'web-port': {
+      const port = positionals[1];
+      if (port === undefined) {
+        const current = await getWebPort();
+        process.stdout.write(`web port: ${current}\n`);
+      } else {
+        const n = parseInt(port, 10);
+        if (!Number.isFinite(n)) throw new Error(`invalid port: ${port}`);
+        await setWebPort(n);
+        process.stdout.write(`web port set to ${n}\n`);
       }
       break;
     }

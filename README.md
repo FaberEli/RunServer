@@ -87,15 +87,32 @@ If nothing shows up, install one of the registered projects and hit **↻ 刷新
 ### CLI
 
 ```sh
-runserver web                       # start the dashboard
-runserver list                      # show all registered projects
-runserver scan                      # rescan local installations
-runserver status                    # status of every installed project
-runserver start deepseek-harness    # start one
-runserver stop  deepseek-harness    # stop
-runserver restart deepseek-harness  # restart
-runserver info                      # backend + paths
+runserver web [--port N] [--host H]   # start the dashboard
+runserver list                        # show all registered projects
+runserver scan                        # rescan local installations
+runserver status                      # status of every installed project
+runserver start deepseek-harness      # start one
+runserver stop  deepseek-harness      # stop
+runserver restart deepseek-harness    # restart
+runserver port deepseek-harness 4080  # pin the port (writes ~/.runserver/config.json)
+runserver port deepseek-harness       # read current override
+runserver port deepseek-harness clear # drop back to the plugin default
+runserver web-port 15000              # change the Web UI port
+runserver info                        # backend + paths
 ```
+
+### Port handling
+
+- Each project has a default port from its plugin (`ui.port`). RunServer
+  pins or auto-picks on start.
+- If the port is in use, RunServer **auto-picks the next free port**
+  (up to 50 above) and logs a warning. The CLI / Web UI show the
+  actually-bound port via `spec._resolvedPort`.
+- Pin a port with `runserver port <id> <n>` (or the Web UI input).
+  Pinned ports still get the same auto-pick treatment if taken.
+- The Web UI port itself is `runserver web-port <n>`. Either way,
+  everything is in `~/.runserver/config.json` (atomic write).
+
 
 ## Adding a new project
 

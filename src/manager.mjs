@@ -19,6 +19,8 @@ import path from 'node:path';
 import os from 'node:os';
 import { promisify } from 'node:util';
 import { log } from './logger.mjs';
+import { findFreePort, extractPortFromSpec, applyPort } from './ports.mjs';
+import { getPortOverride } from './config.mjs';
 
 const execFileP = promisify(execFile);
 
@@ -52,8 +54,12 @@ class ChildProcessManager {
     await ensurePaths();
     if (await this.isRunning(spec.id)) {
       log.warn(`${spec.id}: already running, skipping start`);
-      return;
+      return spec;
     }
+    // Apply any port override the user has set, then auto-resolve if the
+    // resulting port is already taken. Spec is mutated in-place so the
+    // .pid file and log lines reflect the actual port the child binds.
+    await applyPortResolution(spec);
     const logFile = path.join(LOGS_DIR, `${spec.id}.log`);
     const out = await openAppend(logFile);
     const child = spawn(spec.command, spec.args, {
@@ -68,6 +74,7 @@ class ChildProcessManager {
     }
     await writeFile(path.join(PIDS_DIR, `${spec.id}.pid`), String(child.pid));
     log.ok(`${spec.id}: started (pid ${child.pid}, logs: ${logFile})`);
+    return spec;
   }
 
   async stop(id, { timeoutMs = STOP_TIMEOUT_MS } = {}) {
@@ -140,6 +147,11 @@ class LaunchdManager {
     await mkdir(PLIST_DIR, { recursive: true });
     await this.cleanup(spec.id); // P0-4: remove any stale label/plist before we begin
 
+    // Apply any port override the user has set, then auto-resolve if the
+    // resulting port is already taken. The mutation flows into the plist
+    // below so launchd binds the resolved port.
+    await applyPortResolution(spec);
+
     const logFile = path.join(LOGS_DIR, `${spec.id}.log`);
     const errFile = path.join(LOGS_DIR, `${spec.id}.error.log`);
 
@@ -175,6 +187,7 @@ class LaunchdManager {
       log.error(`${spec.id}: launchctl load failed: ${e.message}`);
       throw e;
     }
+    return spec;
   }
 
   async stop(id, opts = {}) {
@@ -381,3 +394,38 @@ export {
   ChildProcessManager, LaunchdManager,
   ensurePaths, STOP_TIMEOUT_MS,
 };
+
+/**
+ * Resolve the bind port for a spec, applying the user's config override
+ * (if any) and auto-picking the next free port when the desired one is
+ * taken. Mutates the spec in place so the manager writes the resolved
+ * port into the plist / spawn args.
+ */
+export async function applyPortResolution(spec) {
+  if (!spec || !spec.id) return;
+  // 1. user override
+  const override = await getPortOverride(spec.id);
+  if (override) {
+    const before = extractPortFromSpec(spec);
+    if (before !== override) {
+      const rewritten = applyPort(spec, override);
+      Object.assign(spec, rewritten);
+      log.info(`${spec.id}: port override applied → ${override}`);
+    }
+  }
+  // 2. detect + auto-pick
+  const desired = extractPortFromSpec(spec);
+  if (desired == null) return; // project has no port — nothing to resolve
+  try {
+    const { port, was, bumped } = await findFreePort(desired);
+    if (bumped) {
+      const rewritten = applyPort(spec, port);
+      Object.assign(spec, rewritten);
+      log.warn(`${spec.id}: port :${was} in use — auto-picked :${port} instead (override with: runserver port ${spec.id} <n>)`);
+    }
+    spec._resolvedPort = port;
+  } catch (e) {
+    log.error(`${spec.id}: port resolution failed: ${e.message}`);
+    throw e;
+  }
+}

@@ -4,6 +4,21 @@ All notable changes to RunServer are documented here. The format is based on [Ke
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-24
+
+### Added
+- **Port configuration** — every project's bind port can be overridden, and ports in use are auto-picked. New `src/config.mjs` reads/writes `~/.runserver/config.json` (atomic write, `.tmp` + rename). New `src/ports.mjs` parses `ServiceSpec` for the desired port (`--port N`, `-p N`, `*_PORT` env, generic `PORT`) and finds the next free port at startup.
+- **`runserver port <id> [<n>]`** subcommand — read a project's port override, set it (writes to `config.json`), or `runserver port <id> clear` to drop back to the plugin default.
+- **`runserver web-port [<n>]`** subcommand — read or set the Web UI port (default 12345). Persists in `config.json` as `webPort`.
+- **`runserver web --port N`** and **`runserver web --host H`** — one-shot CLI flags (don't persist).
+- **`POST /api/projects/:id/port`** and **`GET /api/projects/:id/port`** REST endpoints for the Web UI.
+- **Web UI** — every card with a `ui.port` now has a "端口" number input. Editing it and blurring the field saves to `config.json`; the new port takes effect on next start.
+- **Auto-pick behaviour** — when starting a project whose desired port is in use, RunServer logs `port :X in use — auto-picked :Y instead (override with: runserver port <id> <n>)` and binds the next free port. `spec._resolvedPort` is set on the returned spec so the CLI / Web UI can display the actual bound port.
+- **CHANGELOG entry** kept; new tests in `tests/ports.test.mjs` (14 tests) and `tests/config.test.mjs` (5 tests).
+
+### Changed
+- `manager.start(spec)` now **returns the spec** (with `_resolvedPort` set) instead of `void`. Callers that need the resolved port should use the return value.
+
 ## [0.2.1] - 2026-08-24
 
 ### Fixed
@@ -52,7 +67,8 @@ All notable changes to RunServer are documented here. The format is based on [Ke
 - One project registered: `deepseek-harness` (the upstream one-liner `npx @deepseek-ai/dsh web`).
 - Pushed to `github.com/FaberEli/RunServer`.
 
-[Unreleased]: https://github.com/FaberEli/RunServer/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/FaberEli/RunServer/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/FaberEli/RunServer/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/FaberEli/RunServer/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/FaberEli/RunServer/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/FaberEli/RunServer/releases/tag/v0.1.0

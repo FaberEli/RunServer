@@ -7,12 +7,16 @@ import { fileURLToPath } from 'node:url';
 import { scan } from './scanner.mjs';
 import { listProjects, getProject } from './registry.mjs';
 import { getDefaultManager } from './manager.mjs';
+import { getWebPort, getPortOverride, setPortOverride, clearPortOverride } from './config.mjs';
 import { log } from './logger.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB_DIR = path.join(__dirname, 'web');
 const HOST = process.env.RUNSERVER_HOST || '127.0.0.1';
-const PORT = parseInt(process.env.RUNSERVER_PORT || '12345', 10);
+// PORT comes from (in order): RUNSERVER_PORT env, config.json webPort, 12345.
+const PORT = parseInt(process.env.RUNSERVER_PORT || '', 10)
+  || (await getWebPort().catch(() => 12345))
+  || 12345;
 const SERVER_NAME = `RunServer/${(await readPackageVersion())}`;
 
 async function readPackageVersion() {
@@ -102,6 +106,36 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok: true, name: SERVER_NAME, platform: process.platform, backend: manager.constructor.name });
     }
 
+    // GET /api/projects/:id/port — read current port override
+    const portGetMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/port$/);
+    if (method === 'GET' && portGetMatch) {
+      const [, id] = portGetMatch;
+      const project = await getProject(id);
+      if (!project) return sendText(res, 404, `unknown project: ${id}`);
+      const override = await getPortOverride(id);
+      const spec = await project.service().catch(() => null);
+      const defaultPort = spec ? extractPortFromSpecPublic(spec) : null;
+      return sendJson(res, 200, { id, override, defaultPort });
+    }
+
+    // POST /api/projects/:id/port  body: { port: number | null }
+    if (method === 'POST' && portGetMatch) {
+      const [, id] = portGetMatch;
+      const project = await getProject(id);
+      if (!project) return sendText(res, 404, `unknown project: ${id}`);
+      const body = await readBody(req);
+      if (body.port == null) {
+        await clearPortOverride(id);
+        return sendJson(res, 200, { id, override: null });
+      }
+      const n = parseInt(body.port, 10);
+      if (!Number.isFinite(n) || n < 1 || n > 65535) {
+        return sendText(res, 400, `invalid port: ${body.port}`);
+      }
+      await setPortOverride(id, n);
+      return sendJson(res, 200, { id, override: n });
+    }
+
     return sendText(res, 404, 'not found');
   } catch (e) {
     log.error(`${method} ${url.pathname}: ${e.message}`);
@@ -122,3 +156,7 @@ export async function startWeb() {
 }
 
 export { server, HOST, PORT };
+
+// Re-exported so the port-GET route above can use it without an import
+// cycle in the scanner (which already imports manager ports).
+import { extractPortFromSpec as extractPortFromSpecPublic } from './ports.mjs';

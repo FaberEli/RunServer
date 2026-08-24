@@ -28,6 +28,10 @@
   .install-type code { background: var(--card); padding: 1px 5px; border-radius: 4px; color: var(--fg); }
   .install pre { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--accent); white-space: pre-wrap; word-break: break-all; }
   .install-note { margin-top: 6px; color: var(--muted); font-size: 11px; }
+  .port-row { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+  .port-input { background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font: inherit; font-size: 12px; width: 100px; }
+  .port-input:focus { border-color: var(--accent); outline: none; }
+  .port-hint { font-size: 11px; }
   .grid { display: grid; grid-template-columns: 1fr; gap: 14px; }
   @media (min-width: 720px) { .grid { grid-template-columns: 1fr 1fr; } }
   .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 18px; display: flex; flex-direction: column; gap: 10px; }
@@ -118,6 +122,9 @@ function renderCard(p) {
   const install = p.install
     ? `<details class="install"><summary>如何安装</summary><div class="install-body"><div class="install-type">安装形式: <code>${p.install.type}</code></div><pre>${p.install.command}</pre>${p.install.note ? `<div class="install-note">${p.install.note}</div>` : ''}</div></details>`
     : '';
+  const portSection = p.ui && p.ui.port
+    ? `<div class="port-row">端口 <input class="port-input" type="number" min="1" max="65535" data-id="${p.id}" value="${p.ui.port}" placeholder="默认" /> <span class="port-hint">修改后下次启动生效</span></div>`
+    : '';
   return `
     <div class="card" data-id="${p.id}">
       <h3>${p.name} ${badge}</h3>
@@ -125,6 +132,7 @@ function renderCard(p) {
       <div class="meta">
         ${p.version ? `version <code>${p.version}</code> · ` : ''}${p.note || ''} ${pidInfo ? `· ${pidInfo}` : ''}
       </div>
+      ${portSection}
       <div class="row">
         <button class="primary" data-act="start" ${running || !p.canStart ? 'disabled' : ''}>启动</button>
         <button data-act="stop" ${!running ? 'disabled' : ''}>停止</button>
@@ -151,8 +159,21 @@ async function refresh() {
     grid.querySelectorAll('button[data-act]').forEach((btn) => {
       btn.addEventListener('click', () => act(btn.closest('.card').dataset.id, btn.dataset.act));
     });
+    grid.querySelectorAll('.port-input').forEach((inp) => {
+      inp.addEventListener('change', () => setPort(inp.dataset.id, inp.value));
+    });
   } catch (e) {
     toast('加载失败: ' + e.message, 'err');
+  }
+}
+
+async function setPort(id, value) {
+  try {
+    const body = value === '' ? { port: null } : { port: parseInt(value, 10) };
+    const result = await api(`/api/projects/${id}/port`, { method: 'POST', body: JSON.stringify(body) });
+    toast(`${id}: port → ${result.override ?? '(默认)'}`, 'ok');
+  } catch (e) {
+    toast(`port 修改失败: ${e.message}`, 'err');
   }
 }
 
