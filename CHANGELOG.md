@@ -4,6 +4,11 @@ All notable changes to RunServer are documented here. The format is based on [Ke
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-08-24
+
+### Fixed
+- **`bin/runserver` now resolves symlinks before computing the entry path.** When installed via Homebrew, `bin/runserver` is a symlink into `/opt/homebrew/Cellar/runserver/<ver>/bin/runserver`. The wrapper used `BASH_SOURCE[0]` directly, so the relative `..` landed on `/opt/homebrew` — and `node /opt/homebrew/src/cli.mjs` failed with `Cannot find module`. The wrapper now chases the symlink (via `realpath` when available, or a portable `readlink` loop on macOS) so it finds the real `src/cli.mjs` regardless of how the binary is invoked. This affects Homebrew installs and any other install path that uses a symlinked `bin/`.
+
 ## [0.3.0] - 2026-08-24
 
 ### Added

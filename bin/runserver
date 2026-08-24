@@ -1,6 +1,28 @@
 #!/usr/bin/env bash
 # RunServer CLI entry — resolves the real entry script relative to this file
 # so `npm link`, `npm i -g`, and Homebrew installs all work.
+#
+# IMPORTANT: under Homebrew, bin/runserver is a symlink into
+# /opt/homebrew/Cellar/runserver/<ver>/bin/runserver. If we use
+# BASH_SOURCE[0] directly, the relative `..` lands on /opt/homebrew
+# (where there's no src/cli.mjs). We must resolve the symlink first.
 set -euo pipefail
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SOURCE="${BASH_SOURCE[0]}"
+# realpath on macOS is provided by coreutils brew package, but `cd
+# $(dirname ...); pwd` after `readlink` works everywhere.
+if command -v realpath >/dev/null 2>&1; then
+  RESOLVED="$(realpath "$SOURCE")"
+else
+  # POSIX fallback: readlink -f isn't on macOS either, so chase the
+  # chain manually (sufficient for Homebrew's single-level symlink).
+  while [ -L "$SOURCE" ]; do
+    TARGET="$(readlink "$SOURCE")"
+    case "$TARGET" in
+      /*) SOURCE="$TARGET" ;;
+      *) SOURCE="$(dirname "$SOURCE")/$TARGET" ;;
+    esac
+  done
+  RESOLVED="$SOURCE"
+fi
+SCRIPT_DIR="$(cd "$(dirname "$RESOLVED")" && pwd)"
 exec node "${SCRIPT_DIR}/../src/cli.mjs" "$@"
