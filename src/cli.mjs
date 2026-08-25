@@ -167,7 +167,13 @@ async function main() {
     }
     case 'discover': {
       const { discover } = await import('./discover.mjs');
-      const dir = arg || process.env.RUNSERVER_DISCOVER_ROOT || '';
+      const dir = arg || process.env.RUNSERVER_DISCOVER_ROOT;
+      if (!dir) {
+        process.stderr.write('discover: missing required argument DIR\n\n');
+        process.stderr.write(usage() + '\n');
+        process.exitCode = 2;
+        break;
+      }
       const registered = new Set((await listProjects()).map((p) => p.id));
       const candidates = await discover(dir, { alreadyRegistered: registered });
       log.info(`scanned ${dir}: ${candidates.length} candidate(s)`);

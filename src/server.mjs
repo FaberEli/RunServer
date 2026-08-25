@@ -138,8 +138,14 @@ const server = http.createServer(async (req, res) => {
 
     // GET /api/discover?dir=/some/path — scan a directory for git repos
     // that could be registered as RunServer projects. Read-only.
+    // No default: the caller MUST specify `dir` (or set RUNSERVER_DISCOVER_ROOT
+    // in their environment). We deliberately don't bake in any per-user path
+    // so this stays portable across machines.
     if (method === 'GET' && url.pathname === '/api/discover') {
-      const dir = url.searchParams.get('dir') || process.env.RUNSERVER_DISCOVER_ROOT || '';
+      const dir = url.searchParams.get('dir') || process.env.RUNSERVER_DISCOVER_ROOT;
+      if (!dir) {
+        return sendText(res, 400, 'missing required query parameter: dir (e.g. /api/discover?dir=/path/to/workspace)');
+      }
       try {
         const registered = new Set((await listProjects()).map((p) => p.id));
         const candidates = await discoverProjects(dir, { alreadyRegistered: registered });

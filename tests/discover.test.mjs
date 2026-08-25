@@ -106,7 +106,8 @@ describe('discover — case-insensitive registered match (v0.5.1 fix)', () => {
     const path = await import('node:path');
     const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'rs-discover-'));
     try {
-      // Simulate /SillyTavern — empty .git is enough
+      // Simulate a workspace containing a project whose on-disk directory
+      // uses mixed case — empty .git is enough for findGitRepos to match.
       // for findGitRepos to identify the repo (it just checks F_OK on .git).
       const sub = path.join(tmp, 'SillyTavern');
       await fs.mkdir(path.join(sub, '.git'), { recursive: true });

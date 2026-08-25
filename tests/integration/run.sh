@@ -27,4 +27,22 @@ RUNSERVER_PROJECTS_DIR="$TMPDIR" node -e '
   });
 '
 echo
+echo "## integration: discover without DIR arg (v0.5.2: must fail with exit 2)"
+set +e
+node src/cli.mjs discover > /tmp/runserver-discover-noarg.out 2> /tmp/runserver-discover-noarg.err
+rc=$?
+set -e
+if [ "$rc" -ne 2 ]; then
+  echo "FAIL: discover with no arg should exit 2, got $rc" >&2
+  cat /tmp/runserver-discover-noarg.err >&2
+  exit 1
+fi
+if ! grep -q "missing required argument DIR" /tmp/runserver-discover-noarg.err; then
+  echo "FAIL: discover stderr should mention 'missing required argument DIR'" >&2
+  cat /tmp/runserver-discover-noarg.err >&2
+  exit 1
+fi
+echo "  (exit 2, stderr mentions missing DIR ✓)"
+
+echo
 echo "## integration: all tests pass"

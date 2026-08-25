@@ -203,7 +203,11 @@ export function summarizeReadme(text) {
  * candidates sorted by directory name. Excludes anything that's already
  * registered in RunServer's registry (so the UI doesn't show duplicates).
  *
- * @param {string} root directory to walk (default: )
+ * No default for `root` — the caller must always supply an explicit path so
+ * RunServer never hard-codes a per-user directory. Pass any absolute path
+ * you want scanned (e.g. `~/Code`, `/srv/repos`, or an empty scratch dir).
+ *
+ * @param {string} root directory to walk
  * @param {{ alreadyRegistered?: Set<string> }} opts
  */
 export async function discover(root, { alreadyRegistered = new Set() } = {}) {
