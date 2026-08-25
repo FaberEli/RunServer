@@ -20,6 +20,16 @@
   .toolbar .actions { display: flex; gap: 8px; }
   .empty { padding: 60px 20px; text-align: center; color: var(--muted); border: 1px dashed var(--border); border-radius: 12px; }
   .empty code { background: var(--card); padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+  .discover-panel { margin-top: 18px; padding: 16px; background: var(--card); border: 1px solid var(--border); border-radius: 12px; }
+  .discover-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+  .discover-header h3 { margin: 0; font-size: 14px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; }
+  .discover-header input { background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font: inherit; font-size: 12px; min-width: 320px; }
+  .discover-results { display: grid; grid-template-columns: 1fr; gap: 8px; }
+  .discover-item { padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); font-size: 12px; }
+  .discover-item.registered { opacity: 0.5; }
+  .discover-item h4 { margin: 0 0 4px 0; font-size: 13px; color: var(--fg); }
+  .discover-item .meta { color: var(--muted); font-size: 11px; }
+  .discover-item pre { margin: 6px 0 0 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--accent); white-space: pre-wrap; word-break: break-all; }
   .install { margin-top: 4px; font-size: 12px; }
   .install summary { cursor: pointer; color: var(--muted); user-select: none; padding: 4px 0; }
   .install summary:hover { color: var(--fg); }
@@ -67,10 +77,20 @@
   <div class="toolbar">
     <h2>已记录的本地服务</h2>
     <div class="actions">
+      <button id="discover-btn" title="扫描目录发现可注册的开源项目">🔍 发现</button>
       <button id="refresh" title="重新扫描本地安装">↻ 刷新</button>
     </div>
   </div>
   <div id="content" class="grid"></div>
+  <div id="discover-section" class="discover-panel" style="display: none;">
+    <div class="discover-header">
+      <h3>发现的项目</h3>
+      <input type="text" id="discover-dir" placeholder="扫描目录 (默认 )" />
+      <button id="discover-scan">扫描</button>
+      <span id="discover-status"></span>
+    </div>
+    <div id="discover-results" class="discover-results"></div>
+  </div>
   <div id="log" class="log" style="margin-top: 18px; display: none;"></div>
 </main>
 <footer>
@@ -219,6 +239,63 @@ async function act(id, action) {
   } catch (e) {
     toast(`${id}: ${action} 失败 — ${e.message}`, 'err');
   }
+}
+
+$('#refresh').addEventListener('click', refresh);
+
+// Discover panel — scan a directory for git repos that could be registered.
+const discoverPanel = $('#discover-section');
+const discoverResults = $('#discover-results');
+const discoverStatus = $('#discover-status');
+const discoverDir = $('#discover-dir');
+
+$('#discover-btn').addEventListener('click', () => {
+  discoverPanel.style.display = discoverPanel.style.display === 'none' ? 'block' : 'none';
+  if (discoverPanel.style.display === 'block' && !discoverResults.children.length) scanDiscover();
+});
+
+$('#discover-scan').addEventListener('click', scanDiscover);
+
+async function scanDiscover() {
+  const dir = discoverDir.value.trim() || undefined;
+  discoverStatus.textContent = '扫描中…';
+  discoverResults.innerHTML = '';
+  try {
+    const qs = dir ? `?dir=${encodeURIComponent(dir)}` : '';
+    const data = await api(`/api/discover${qs}`);
+    discoverStatus.textContent = `${data.count} 个候选 (${data.dir})`;
+    if (!data.candidates.length) {
+      discoverResults.innerHTML = '<div class="empty">没有发现新的 git 仓库 (或全已注册)</div>';
+      return;
+    }
+    discoverResults.innerHTML = data.candidates.map(renderDiscover).join('');
+  } catch (e) {
+    discoverStatus.textContent = '';
+    discoverResults.innerHTML = `<div class="empty">扫描失败: ${e.message}</div>`;
+  }
+}
+
+function renderDiscover(c) {
+  if (c.registered) {
+    return `<div class="discover-item registered">
+      <h4>${c.name}</h4>
+      <div class="meta">✓ 已在 RunServer 注册 — ${c.path}</div>
+    </div>`;
+  }
+  const inst = c.install || {};
+  const snippet = c.installSnippet ? `<pre>${escapeHtml(c.installSnippet)}</pre>` : '';
+  return `<div class="discover-item">
+    <h4>${c.name} <span class="meta">[${inst.type || '?'}] ${inst.lang || ''}${inst.version ? ' v' + inst.version : ''}</span></h4>
+    ${c.summary ? `<div class="meta">${escapeHtml(c.summary)}</div>` : ''}
+    <div class="meta">${escapeHtml(c.path)}${c.origin ? ' · ' + escapeHtml(c.origin) : ''}</div>
+    ${inst.command ? `<pre>${escapeHtml(inst.command)}</pre>` : ''}
+    ${inst.note ? `<div class="meta">${escapeHtml(inst.note)}</div>` : ''}
+    ${snippet}
+  </div>`;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[<>&"']/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
 $('#refresh').addEventListener('click', refresh);

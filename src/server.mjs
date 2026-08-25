@@ -5,6 +5,7 @@ import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scan } from './scanner.mjs';
+import { discover as discoverProjects } from './discover.mjs';
 import { listProjects, getProject } from './registry.mjs';
 import { getDefaultManager } from './manager.mjs';
 import { getWebPort, getPortOverride, setPortOverride, clearPortOverride } from './config.mjs';
@@ -133,6 +134,19 @@ const server = http.createServer(async (req, res) => {
 
     if (method === 'GET' && url.pathname === '/api/health') {
       return sendJson(res, 200, { ok: true, name: SERVER_NAME, platform: process.platform, backend: manager.constructor.name });
+    }
+
+    // GET /api/discover?dir=/some/path — scan a directory for git repos
+    // that could be registered as RunServer projects. Read-only.
+    if (method === 'GET' && url.pathname === '/api/discover') {
+      const dir = url.searchParams.get('dir') || process.env.RUNSERVER_DISCOVER_ROOT || '';
+      try {
+        const registered = new Set((await listProjects()).map((p) => p.id));
+        const candidates = await discoverProjects(dir, { alreadyRegistered: registered });
+        return sendJson(res, 200, { dir, count: candidates.length, candidates });
+      } catch (e) {
+        return sendText(res, 400, `discover failed: ${e.message}`);
+      }
     }
 
     // GET /api/projects/:id/port — read current port override

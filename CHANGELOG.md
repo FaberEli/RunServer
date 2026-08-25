@@ -4,6 +4,15 @@ All notable changes to RunServer are documented here. The format is based on [Ke
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-25
+
+### Added
+- **Project discovery** — new `src/discover.mjs` walks any directory (default ``) up to depth 3 looking for git repositories, heuristically detects each repo's language (go.mod / pyproject.toml / Cargo.toml / package.json), reads its README, and returns a list of candidates that *could* be registered in RunServer. **Read-only** — never writes project files. The user must explicitly register what they want.
+- **`GET /api/discover?dir=...`** — JSON endpoint exposing the candidates to the Web UI. Candidates that are already registered are marked so the UI can dim them.
+- **`runserver discover [dir]`** — CLI subcommand that prints the same list to stdout.
+- **Web UI "发现" panel** — a collapsible section in the dashboard. Click 🔍 in the toolbar to open it; click "扫描" to scan the current directory. Each candidate shows install type (npm / go / pip / binary / cargo / unknown), README summary, suggested install command, and the install section snippet from the README.
+- **`discover.test.mjs`** — 7 new tests for the discovery helpers (summarizeReadme + detectInstall, with a tmpdir for filesystem mocks). 52 tests total, all passing.
+
 ## [0.4.0] - 2026-08-24
 
 ### Added

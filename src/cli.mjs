@@ -165,6 +165,21 @@ async function main() {
       }, null, 2) + '\n');
       break;
     }
+    case 'discover': {
+      const { discover } = await import('./discover.mjs');
+      const dir = arg || process.env.RUNSERVER_DISCOVER_ROOT || '';
+      const registered = new Set((await listProjects()).map((p) => p.id));
+      const candidates = await discover(dir, { alreadyRegistered: registered });
+      log.info(`scanned ${dir}: ${candidates.length} candidate(s)`);
+      for (const c of candidates) {
+        if (c.registered) {
+          process.stdout.write(`  ✓ ${c.id.padEnd(28)} [registered]  ${c.path}\n`);
+        } else {
+          process.stdout.write(`  ? ${c.id.padEnd(28)} ${(c.install.type || 'unknown').padEnd(8)}  ${c.path}\n`);
+        }
+      }
+      break;
+    }
     default:
       process.stderr.write(`unknown command: ${cmd}\n\n` + usage());
       process.exitCode = 2;
@@ -177,8 +192,9 @@ async function readPackageVersion() {
   const { fileURLToPath } = await import('node:url');
   const here = path.dirname(fileURLToPath(import.meta.url));
   try {
-    const pkg = JSON.parse(await readFile(path.join(here, '..', 'package.json'), 'utf8'));
-    return pkg.version || '0.0.0';
+    const text = await readFile(path.join(here, '..', 'package.json'), 'utf8');
+    const pkg = JSON.parse(text);
+    return (pkg && pkg.version) || '0.0.0';
   } catch { return '0.0.0'; }
 }
 
