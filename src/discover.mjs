@@ -216,7 +216,11 @@ export async function discover(root, { alreadyRegistered = new Set() } = {}) {
   for (const repo of repos) {
     const name = path.basename(repo);
     const id = name; // full name (per RunServer convention)
-    if (alreadyRegistered.has(id)) {
+    // Match case-insensitively: project plugins may use all-lowercase ids
+    // (e.g. `sillytavern`) while the on-disk directory is mixed case
+    // (e.g. `SillyTavern`). Without this, the same project would show up
+    // both in the "registered" group and in the discover candidates list.
+    if (alreadyRegistered.has(id.toLowerCase())) {
       out.push({ path: repo, name, id, registered: true, skipReason: 'already in RunServer' });
       continue;
     }

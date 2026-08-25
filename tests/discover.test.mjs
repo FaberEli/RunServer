@@ -1,7 +1,7 @@
 // discover.test.mjs — unit tests for src/discover.mjs (pure helpers only;
 // the directory-walk is exercised by hand + the integration script).
 import { describe, it, expect } from 'vitest';
-import { summarizeReadme, detectInstall } from '../src/discover.mjs';
+import { summarizeReadme, detectInstall, discover } from '../src/discover.mjs';
 
 describe('summarizeReadme', () => {
   it('skips headings, images, and links; picks the first prose line', () => {
@@ -89,6 +89,51 @@ describe('detectInstall — uses a temp dir we point it at', () => {
       expect(r.type).toBe('npm');
       // version is undefined because the parse failed
       expect(r.version == null).toBe(true);
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('discover — case-insensitive registered match (v0.5.1 fix)', () => {
+  it('flags SillyTavern (mixed case dir) as already registered when registry has "sillytavern"', async () => {
+    // Repro: registry project plugin uses lowercase id `sillytavern`,
+    // but the on-disk dir is `SillyTavern`. A strict compare missed it,
+    // showing the project twice in the UI (once as registered, once as
+    // an unregistered candidate). v0.5.1 normalises the compare to lowercase.
+    const fs = await import('node:fs/promises');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'rs-discover-'));
+    try {
+      // Simulate /SillyTavern — empty .git is enough
+      // for findGitRepos to identify the repo (it just checks F_OK on .git).
+      const sub = path.join(tmp, 'SillyTavern');
+      await fs.mkdir(path.join(sub, '.git'), { recursive: true });
+
+      const r = await discover(tmp, { alreadyRegistered: new Set(['sillytavern']) });
+      expect(r).toHaveLength(1);
+      expect(r[0].id).toBe('SillyTavern');           // id keeps on-disk casing
+      expect(r[0].name).toBe('SillyTavern');
+      expect(r[0].registered).toBe(true);            // matched case-insensitively
+      expect(r[0].skipReason).toBe('already in RunServer');
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('does not flag SillyTavern as registered when registry is empty', async () => {
+    const fs = await import('node:fs/promises');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'rs-discover-'));
+    try {
+      const sub = path.join(tmp, 'SillyTavern');
+      await fs.mkdir(path.join(sub, '.git'), { recursive: true });
+
+      const r = await discover(tmp, { alreadyRegistered: new Set() });
+      expect(r).toHaveLength(1);
+      expect(r[0].registered).toBe(false);
     } finally {
       await fs.rm(tmp, { recursive: true, force: true });
     }

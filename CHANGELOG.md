@@ -4,6 +4,14 @@ All notable changes to RunServer are documented here. The format is based on [Ke
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-08-25
+
+### Fixed
+- **`src/discover.mjs` matches already-registered projects case-insensitively.** The project plugin `sillytavern.mjs` uses the lowercase id `sillytavern`, but the on-disk directory is `SillyTavern`. The previous strict comparison missed the match, causing the same project to appear both in the "registered" list and in the "discover" candidates list (with the same install instructions duplicated). v0.5.1 normalises the lookup to `id.toLowerCase()` so directory casing no longer matters. The candidate's `id` and `name` fields still preserve the on-disk casing so the UI shows the real directory name.
+
+### Tests
+- `tests/discover.test.mjs` now has 9 tests (added 2 for case-insensitive registered match). 54 tests total, all passing.
+
 ## [0.5.0] - 2026-08-25
 
 ### Added
