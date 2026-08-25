@@ -4,10 +4,15 @@ All notable changes to RunServer are documented here. The format is based on [Ke
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-08-25
+
+### Changed
+- **Release hygiene: scrubbed per-user identifying strings from all v0.5.3+ source, docs, and metadata.** The v0.5.0 commit and v0.5.0 / v0.5.1 tarballs still contain those strings (immutable history); the v0.5.3 tarball and every commit from this point forward does not.
+
 ## [0.5.2] - 2026-08-25
 
 ### Fixed
-- **Discover no longer hard-codes a per-user path.** v0.5.0 and v0.5.1 baked `` into the default for `GET /api/discover` and `runserver discover`, which only made sense on the original author's machine. v0.5.2 removes that fallback entirely — callers MUST now pass `?dir=...` (or set `RUNSERVER_DISCOVER_ROOT` in their environment). The API returns `400 missing required query parameter: dir` and the CLI exits with code 2 if neither is supplied. The Web UI's input placeholder was also updated to make the requirement obvious.
+- **Discover no longer hard-codes a per-user path.** v0.5.0 and v0.5.1 baked a per-user directory path into the default for `GET /api/discover` and `runserver discover`, which only made sense on the original author's machine. v0.5.2 removes that fallback entirely — callers MUST now pass `?dir=...` (or set `RUNSERVER_DISCOVER_ROOT` in their environment). The API returns `400 missing required query parameter: dir` and the CLI exits with code 2 if neither is supplied. The Web UI's input placeholder was also updated to make the requirement obvious.
 
 ### Tests
 - `tests/integration/run.sh` now asserts that `runserver discover` with no argument exits 2 and mentions `missing required argument DIR` in stderr. 54 unit tests + integration tests, all passing.
@@ -23,7 +28,7 @@ All notable changes to RunServer are documented here. The format is based on [Ke
 ## [0.5.0] - 2026-08-25
 
 ### Added
-- **Project discovery** — new `src/discover.mjs` walks an explicitly-supplied directory (caller MUST pass a path — see v0.5.2) up to depth 3 looking for git repositories, heuristically detects each repo's language (go.mod / pyproject.toml / Cargo.toml / package.json), reads its README, and returns a list of candidates that *could* be registered in RunServer. **Read-only** — never writes project files. The user must explicitly register what they want.
+- **Project discovery** — new `src/discover.mjs` walks a caller-supplied directory up to depth 3 looking for git repositories, heuristically detects each repo's language (go.mod / pyproject.toml / Cargo.toml / package.json), reads its README, and returns a list of candidates that *could* be registered in RunServer. **Read-only** — never writes project files. The user must explicitly register what they want. (Originally shipped with a per-user default; that default was removed in v0.5.2 — callers must now pass a path explicitly.)
 - **`GET /api/discover?dir=...`** — JSON endpoint exposing the candidates to the Web UI. Candidates that are already registered are marked so the UI can dim them.
 - **`runserver discover [dir]`** — CLI subcommand that prints the same list to stdout.
 - **Web UI "发现" panel** — a collapsible section in the dashboard. Click 🔍 in the toolbar to open it; click "扫描" to scan the current directory. Each candidate shows install type (npm / go / pip / binary / cargo / unknown), README summary, suggested install command, and the install section snippet from the README.
